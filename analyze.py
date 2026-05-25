@@ -16,8 +16,8 @@ import sys
 # =========================
 # ■ 定数
 # =========================
-MIN_OK_COUNT = 2   # 統計分析に必要な最小OKデータ数
-MA_WINDOW    = 20  # 時系列グラフの移動平均ウィンドウ幅
+MIN_OK_COUNT = 2    # 統計分析に必要な最小OKデータ数
+MA_WINDOW    = 500  # 時系列グラフの移動平均ウィンドウ幅（デフォルト）
 
 
 def _hinshoku_display(hinshoku_num):
@@ -71,6 +71,21 @@ class LotPreviewDialog(tk.Toplevel):
         self.lot_label_var = tk.StringVar()
         ttk.Label(frame_top, textvariable=self.lot_label_var, foreground="navy").pack(side="left", padx=15)
 
+        # --- 移動平均ウィンドウ入力 ---
+        frame_ma = ttk.Frame(self, padding=(10, 0, 10, 5))
+        frame_ma.pack(fill="x")
+
+        ttk.Label(frame_ma, text="移動平均ウィンドウ:").pack(side="left")
+        self.ma_window_var = tk.IntVar(value=MA_WINDOW)
+        ttk.Spinbox(
+            frame_ma, from_=10, to=5000,
+            textvariable=self.ma_window_var, width=7,
+            command=self._update_ma_label
+        ).pack(side="left", padx=5)
+        ttk.Label(frame_ma, text="点").pack(side="left")
+        self.ma_approx_var = tk.StringVar()
+        ttk.Label(frame_ma, textvariable=self.ma_approx_var, foreground="gray").pack(side="left", padx=8)
+
         # --- Treeview ---
         frame_tree = ttk.Frame(self, padding=10)
         frame_tree.pack(fill="both", expand=True)
@@ -117,6 +132,22 @@ class LotPreviewDialog(tk.Toplevel):
         df["時間差(分)"] = df["日付時刻"].diff().dt.total_seconds() / 60
         df["ロット"] = (df["時間差(分)"] > threshold_min).cumsum() + 1
         return df
+
+    def _update_ma_label(self):
+        try:
+            ma_win = self.ma_window_var.get()
+        except tk.TclError:
+            return
+        df_sorted = self.df.sort_values("日付時刻")
+        valid_times = df_sorted["日付時刻"].dropna()
+        if len(valid_times) >= 2:
+            total_min = (valid_times.max() - valid_times.min()).total_seconds() / 60
+            if total_min > 0:
+                rate = len(df_sorted) / total_min
+                approx_min = ma_win / rate
+                self.ma_approx_var.set(f"≈ {approx_min:.0f}分ぶん（{ma_win}個ぶん）")
+                return
+        self.ma_approx_var.set(f"（{ma_win}個ぶん）")
 
     def _update_preview(self):
         threshold = self.threshold_var.get()
@@ -168,12 +199,15 @@ class LotPreviewDialog(tk.Toplevel):
             self.warn_label_var.set("")
 
         self._df_with_lots = df
+        self._update_ma_label()
 
     def _on_ok(self):
+        self.ma_window = self.ma_window_var.get()
         self.result = ("ok", self._df_with_lots)
         self.destroy()
 
     def _on_no_split(self):
+        self.ma_window = self.ma_window_var.get()
         df = self.df.copy()
         df["ロット"] = 1
         self.result = ("ok", df)
@@ -837,7 +871,7 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
 # ■ ロット処理
 # =========================
 def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=None,
-                product_name=None):
+                product_name=None, ma_window=MA_WINDOW):
     """
     1ロット分の分析を行いExcelを出力する。
     spec: None | (nominal_or_None, offset_or_None)
@@ -971,9 +1005,9 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     if usl is not None:
         ax2.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f}")
         ax2.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f}")
-    ma2 = pd.Series(y_vals).rolling(window=MA_WINDOW, min_periods=1).mean()
+    ma2 = pd.Series(y_vals).rolling(window=ma_window, min_periods=1).mean()
     ax2.plot(x_all, ma2.values, color="green", linewidth=2.0,
-             alpha=0.9, zorder=5, label=f"移動平均（{MA_WINDOW}点）")
+             alpha=0.9, zorder=5, label=f"移動平均（{ma_window}点）")
 
     ax2.set_title(f"{chart_prefix}{lot_display}　時系列チャート（OK品のみ・n={len(df_ok)}）", fontsize=14, fontweight="bold")
     ax2.set_ylabel("測定値(g)", fontsize=12)
@@ -1032,9 +1066,9 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                     label=f"基準値: {spec_nominal:.3f}")
     ax3.axhline(upper, color="darkorange", linewidth=1.5, linestyle="--", label=f"+3σ（OK品）: {upper:.3f}")
     ax3.axhline(lower, color="darkorange", linewidth=1.5, linestyle="--", label=f"-3σ（OK品）: {lower:.3f}")
-    ma3_all = y_vals_all.rolling(window=MA_WINDOW, min_periods=1).mean()
+    ma3_all = y_vals_all.rolling(window=ma_window, min_periods=1).mean()
     ax3.plot(x_all_for_ma, ma3_all.values, color="green", linewidth=2.0,
-             alpha=0.9, zorder=5, label=f"移動平均・全数（{MA_WINDOW}点）")
+             alpha=0.9, zorder=5, label=f"移動平均・全数（{ma_window}点）")
     if usl is not None:
         ax3.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f}")
         ax3.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f}")
@@ -1120,6 +1154,7 @@ def process_files(files):
             return
 
         df = dialog.result[1]
+        ma_window = getattr(dialog, "ma_window", MA_WINDOW)
 
         # ロットごとに規格値入力
         spec_per_lot = {}      # lot -> (spec, lot_label, product_name)
@@ -1147,7 +1182,8 @@ def process_files(files):
             lot_spec, lot_label, product_name = spec_per_lot.get(lot, (None, None, None))
             status, ok_count = process_lot(group, lot, save_dir, hinshoku_num,
                                            spec=lot_spec, lot_label=lot_label,
-                                           product_name=product_name)
+                                           product_name=product_name,
+                                           ma_window=ma_window)
             if status == "ok":
                 created_lots.append((lot, ok_count))
             else:
