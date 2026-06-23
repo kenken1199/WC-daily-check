@@ -7,6 +7,7 @@ import numpy as np
 from scipy import stats
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import datetime
 from io import BytesIO
 import os
@@ -56,6 +57,8 @@ class LotPreviewDialog(tk.Toplevel):
         self.resizable(True, True)
         self.grab_set()
 
+        self._ma_window = MA_WINDOW
+
         # --- しきい値入力 ---
         frame_top = ttk.Frame(self, padding=10)
         frame_top.pack(fill="x")
@@ -71,27 +74,14 @@ class LotPreviewDialog(tk.Toplevel):
         self.lot_label_var = tk.StringVar()
         ttk.Label(frame_top, textvariable=self.lot_label_var, foreground="navy").pack(side="left", padx=15)
 
-        # --- 移動平均ウィンドウ入力 ---
-        frame_ma = ttk.Frame(self, padding=(10, 0, 10, 5))
-        frame_ma.pack(fill="x")
-
-        ttk.Label(frame_ma, text="移動平均ウィンドウ:").pack(side="left")
-        self.ma_window_var = tk.IntVar(value=MA_WINDOW)
-        ttk.Spinbox(
-            frame_ma, from_=10, to=5000,
-            textvariable=self.ma_window_var, width=7,
-            command=self._update_ma_label
-        ).pack(side="left", padx=5)
-        ttk.Label(frame_ma, text="点").pack(side="left")
-        self.ma_approx_var = tk.StringVar()
-        ttk.Label(frame_ma, textvariable=self.ma_approx_var, foreground="gray").pack(side="left", padx=8)
+        ttk.Button(frame_top, text="設定", command=self._open_settings).pack(side="right", padx=5)
 
         # --- Treeview ---
         frame_tree = ttk.Frame(self, padding=10)
-        frame_tree.pack(fill="both", expand=True)
+        frame_tree.pack(fill="x")
 
         cols = ("品種", "ロット", "開始時刻", "終了時刻", "総件数", "OKデータ件数", "状態")
-        self.tree = ttk.Treeview(frame_tree, columns=cols, show="headings", height=10)
+        self.tree = ttk.Treeview(frame_tree, columns=cols, show="headings", height=7)
         col_widths = {"品種": 140, "ロット": 70, "開始時刻": 150, "終了時刻": 150,
                       "総件数": 80, "OKデータ件数": 110, "状態": 110}
         for col in cols:
@@ -106,11 +96,68 @@ class LotPreviewDialog(tk.Toplevel):
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        # --- 合否判定サマリー ---
+        frame_summary = ttk.LabelFrame(self, text=" 合否判定サマリー ", padding=(5, 3))
+        frame_summary.pack(fill="x", padx=10, pady=(0, 4))
+
+        cols_s = ("ロット", "不良率 (%)", "外れ値率 (%)", "判定")
+        self.summary_tree = ttk.Treeview(frame_summary, columns=cols_s,
+                                         show="headings", height=4)
+        col_w_s = {"ロット": 90, "不良率 (%)": 85, "外れ値率 (%)": 95, "判定": 115}
+        for col in cols_s:
+            self.summary_tree.heading(col, text=col)
+            self.summary_tree.column(col, anchor="center", width=col_w_s[col])
+
+        self.summary_tree.tag_configure("ok",      background="#E8F5E9", foreground="#1B5E20")
+        self.summary_tree.tag_configure("caution", background="#FFFDE7", foreground="#C75000")
+        self.summary_tree.tag_configure("ng",      background="#FFEBEE", foreground="#B71C1C")
+        self.summary_tree.tag_configure("skip",    background="#F5F5F5", foreground="#757575")
+
+        sb_s = ttk.Scrollbar(frame_summary, orient="vertical",
+                             command=self.summary_tree.yview)
+        self.summary_tree.configure(yscrollcommand=sb_s.set)
+        self.summary_tree.pack(side="left", fill="x", expand=True)
+        sb_s.pack(side="right", fill="y")
+
         # --- 注意書きラベル ---
         self.warn_label_var = tk.StringVar()
         warn_label = ttk.Label(self, textvariable=self.warn_label_var,
                                foreground="#9C0006", padding=(10, 0))
         warn_label.pack(fill="x")
+
+        # --- グラフプレビュー ---
+        frame_charts = ttk.LabelFrame(self, text=" グラフプレビュー ", padding=(5, 3))
+        frame_charts.pack(fill="both", expand=True, padx=10, pady=(0, 4))
+
+        frame_lot_sel = ttk.Frame(frame_charts)
+        frame_lot_sel.pack(fill="x", pady=(0, 3))
+        ttk.Label(frame_lot_sel, text="表示ロット:").pack(side="left")
+        self._lot_sel_var = tk.StringVar(value="全ロット")
+        self._lot_combo = ttk.Combobox(frame_lot_sel, textvariable=self._lot_sel_var,
+                                       state="readonly", width=14)
+        self._lot_combo.pack(side="left", padx=5)
+        self._lot_combo.bind("<<ComboboxSelected>>", self._on_lot_sel_change)
+
+        self._nb = ttk.Notebook(frame_charts)
+        self._nb.pack(fill="both", expand=True)
+
+        tab_hist = ttk.Frame(self._nb)
+        self._nb.add(tab_hist, text="ヒストグラム")
+        self._fig_hist, self._ax_hist = plt.subplots(figsize=(8, 4), dpi=96)
+        self._canvas_hist = FigureCanvasTkAgg(self._fig_hist, master=tab_hist)
+        self._canvas_hist.get_tk_widget().pack(fill="both", expand=True)
+
+        tab_all = ttk.Frame(self._nb)
+        self._nb.add(tab_all, text="全製品 時系列")
+        self._fig_all, self._ax_all = plt.subplots(figsize=(8, 4), dpi=96)
+        self._canvas_all = FigureCanvasTkAgg(self._fig_all, master=tab_all)
+        self._canvas_all.get_tk_widget().pack(fill="both", expand=True)
+
+        tab_ok = ttk.Frame(self._nb)
+        self._nb.add(tab_ok, text="OK品 時系列")
+        self._fig_ok, self._ax_ok = plt.subplots(figsize=(8, 4), dpi=96)
+        self._canvas_ok = FigureCanvasTkAgg(self._fig_ok, master=tab_ok)
+        self._canvas_ok.get_tk_widget().pack(fill="both", expand=True)
 
         # --- ボタン ---
         frame_btn = ttk.Frame(self, padding=(10, 5, 10, 10))
@@ -133,21 +180,11 @@ class LotPreviewDialog(tk.Toplevel):
         df["ロット"] = (df["時間差(分)"] > threshold_min).cumsum() + 1
         return df
 
-    def _update_ma_label(self):
-        try:
-            ma_win = self.ma_window_var.get()
-        except tk.TclError:
-            return
-        df_sorted = self.df.sort_values("日付時刻")
-        valid_times = df_sorted["日付時刻"].dropna()
-        if len(valid_times) >= 2:
-            total_min = (valid_times.max() - valid_times.min()).total_seconds() / 60
-            if total_min > 0:
-                rate = len(df_sorted) / total_min
-                approx_min = ma_win / rate
-                self.ma_approx_var.set(f"≈ {approx_min:.0f}分ぶん（{ma_win}個ぶん）")
-                return
-        self.ma_approx_var.set(f"（{ma_win}個ぶん）")
+    def _open_settings(self):
+        dlg = SettingsDialog(self, self.df, self._ma_window)
+        self.wait_window(dlg)
+        if dlg.result is not None:
+            self._ma_window = dlg.result["ma_window"]
 
     def _update_preview(self):
         threshold = self.threshold_var.get()
@@ -199,15 +236,132 @@ class LotPreviewDialog(tk.Toplevel):
             self.warn_label_var.set("")
 
         self._df_with_lots = df
-        self._update_ma_label()
+
+        # --- 合否判定サマリー更新 ---
+        for item in self.summary_tree.get_children():
+            self.summary_tree.delete(item)
+
+        _verdict = {"ok": "○ 問題なし", "caution": "△ 要確認", "ng": "× 問題あり"}
+        for lot, group in df.groupby("ロット"):
+            lot_label_s = f"ロット{lot}"
+            ok_s = int((group["ランクコード"] == "2").sum())
+            if ok_s < MIN_OK_COUNT:
+                self.summary_tree.insert("", "end", tags=("skip",),
+                    values=(lot_label_s, "−", "−", "データ不足"))
+                continue
+            d_rate, o_rate = _quick_lot_stats(group)
+            if o_rate is None:
+                self.summary_tree.insert("", "end", tags=("skip",),
+                    values=(lot_label_s, f"{d_rate:.2f}", "−", "計算不可"))
+                continue
+            j = _compute_judgment(d_rate, o_rate)
+            self.summary_tree.insert("", "end", tags=(j["overall"],),
+                values=(lot_label_s, f"{d_rate:.2f}", f"{o_rate:.2f}",
+                        _verdict[j["overall"]]))
+        lot_nums = sorted(df["ロット"].unique())
+        self._lot_combo["values"] = ["全ロット"] + [f"ロット{n}" for n in lot_nums]
+        self._lot_sel_var.set("全ロット")
+        self._draw_charts(df)
+
+    def _on_lot_sel_change(self, _event=None):
+        df = self._df_with_lots
+        sel = self._lot_sel_var.get()
+        if sel == "全ロット":
+            self._draw_charts(df)
+        else:
+            lot_num = int(sel.replace("ロット", ""))
+            self._draw_charts(df[df["ロット"] == lot_num])
+
+    def _draw_charts(self, df):
+        ok_df   = df[df["ランクコード"] == "2"].sort_values("日付時刻").copy()
+        ok_vals = pd.to_numeric(ok_df["測定値(g)"], errors="coerce").dropna()
+
+        # ヒストグラム
+        ax = self._ax_hist
+        ax.clear()
+        if len(ok_vals) >= 2:
+            mean = float(ok_vals.mean())
+            std  = float(ok_vals.std(ddof=1))
+            ax.hist(ok_vals, bins=30, color="#42A5F5", edgecolor="white", alpha=0.8)
+            ax.axvline(mean, color="#1565C0", linewidth=1.5, label="μ")
+            for n, col, ls in [(1, "#FFA726", "--"), (2, "#EF5350", "-."), (3, "#B71C1C", ":")]:
+                ax.axvline(mean + n * std, color=col, linestyle=ls, linewidth=1.2, label=f"+{n}σ")
+                ax.axvline(mean - n * std, color=col, linestyle=ls, linewidth=1.2)
+            ax.legend(fontsize=10)
+        ax.set_title("OK品 測定値分布", fontsize=12)
+        ax.set_xlabel("測定値 (g)", fontsize=11)
+        ax.set_ylabel("頻度", fontsize=11)
+        ax.tick_params(labelsize=10)
+        self._fig_hist.tight_layout()
+        self._canvas_hist.draw()
+
+        # 全製品時系列
+        df_s = df.sort_values("日付時刻")
+        ax = self._ax_all
+        ax.clear()
+        all_v    = pd.to_numeric(df_s["測定値(g)"], errors="coerce")
+        times    = df_s["日付時刻"]
+        ok_mask  = df_s["ランクコード"] == "2"
+        if len(times) > 0:
+            ax.scatter(times[ok_mask],  all_v[ok_mask],  s=12, color="#1976D2", alpha=0.6, label="OK")
+            ax.scatter(times[~ok_mask], all_v[~ok_mask], s=16, color="#E53935",
+                       marker="x", alpha=0.8, label="NG")
+            if len(ok_vals) >= 2:
+                mean = float(ok_vals.mean())
+                std  = float(ok_vals.std(ddof=1))
+                ax.axhline(mean + 3 * std, color="#B71C1C", linestyle=":", linewidth=1.2, label="±3σ")
+                ax.axhline(mean - 3 * std, color="#B71C1C", linestyle=":", linewidth=1.2)
+                ax.set_ylim(mean - 20 * std, mean + 20 * std)
+            ax.legend(fontsize=10, markerscale=2)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d %H:%M"))
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right", fontsize=9)
+        ax.set_title("全製品 時系列", fontsize=12)
+        ax.set_ylabel("測定値 (g)", fontsize=11)
+        ax.tick_params(axis="y", labelsize=10)
+        self._fig_all.tight_layout()
+        self._canvas_all.draw()
+
+        # OK品時系列
+        ax = self._ax_ok
+        ax.clear()
+        if len(ok_vals) >= 2:
+            ok_times = ok_df["日付時刻"]
+            ok_v     = pd.to_numeric(ok_df["測定値(g)"], errors="coerce")
+            ax.scatter(ok_times, ok_v, s=12, color="#1976D2", alpha=0.6)
+            win = min(self._ma_window, len(ok_v))
+            ma  = ok_v.rolling(window=win, min_periods=1).mean()
+            ax.plot(ok_times, ma, color="#FF6F00", linewidth=1.8, label=f"移動平均 n={win}")
+            mean = float(ok_vals.mean())
+            std  = float(ok_vals.std(ddof=1))
+            sigma_lines = [
+                (3, "#B71C1C", ":"),
+                (4, "#E65100", "--"),
+                (5, "#6A1B9A", "-."),
+            ]
+            for n, col, ls in sigma_lines:
+                ax.axhline(mean + n * std, color=col, linestyle=ls, linewidth=1.2, label=f"±{n}σ")
+                ax.axhline(mean - n * std, color=col, linestyle=ls, linewidth=1.2)
+            ax.legend(fontsize=9)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%m/%d %H:%M"))
+            plt.setp(ax.xaxis.get_majorticklabels(), rotation=30, ha="right", fontsize=9)
+        ax.set_title("OK品 時系列", fontsize=12)
+        ax.set_ylabel("測定値 (g)", fontsize=11)
+        ax.tick_params(axis="y", labelsize=10)
+        self._fig_ok.tight_layout()
+        self._canvas_ok.draw()
+
+    def destroy(self):
+        for fig in (self._fig_hist, self._fig_all, self._fig_ok):
+            plt.close(fig)
+        super().destroy()
 
     def _on_ok(self):
-        self.ma_window = self.ma_window_var.get()
+        self.ma_window = self._ma_window
         self.result = ("ok", self._df_with_lots)
         self.destroy()
 
     def _on_no_split(self):
-        self.ma_window = self.ma_window_var.get()
+        self.ma_window = self._ma_window
         df = self.df.copy()
         df["ロット"] = 1
         self.result = ("ok", df)
@@ -221,6 +375,65 @@ class LotPreviewDialog(tk.Toplevel):
         self.result = ("cancel", None)
         self.destroy()
 
+
+
+# =========================
+# ■ 設定ダイアログ
+# =========================
+class SettingsDialog(tk.Toplevel):
+
+    def __init__(self, parent, df, ma_window):
+        super().__init__(parent)
+        self.title("設定")
+        self.result = None
+        self.resizable(False, False)
+        self.grab_set()
+        self._df = df
+
+        frame = ttk.Frame(self, padding=18)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="移動平均ウィンドウ:").grid(row=0, column=0, sticky="w", pady=(0, 14))
+        self.ma_var = tk.IntVar(value=ma_window)
+        ttk.Spinbox(frame, from_=10, to=5000, textvariable=self.ma_var, width=7,
+                    command=self._update_ma_label).grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Label(frame, text="点").grid(row=0, column=2, sticky="w")
+        self.ma_approx_var = tk.StringVar()
+        ttk.Label(frame, textvariable=self.ma_approx_var,
+                  foreground="gray").grid(row=0, column=3, sticky="w", padx=8)
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=1, column=0, columnspan=4, pady=(4, 0))
+        ttk.Button(btn_frame, text="OK", command=self._on_ok).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="キャンセル", command=self.destroy).pack(side="left", padx=5)
+
+        self._update_ma_label()
+
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width()  - self.winfo_width())  // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def _update_ma_label(self):
+        try:
+            ma_win = self.ma_var.get()
+        except tk.TclError:
+            return
+        df_sorted = self._df.sort_values("日付時刻")
+        valid_times = df_sorted["日付時刻"].dropna()
+        if len(valid_times) >= 2:
+            total_min = (valid_times.max() - valid_times.min()).total_seconds() / 60
+            if total_min > 0:
+                rate = len(df_sorted) / total_min
+                self.ma_approx_var.set(f"≈ {ma_win / rate:.0f}分ぶん（{ma_win}個ぶん）")
+                return
+        self.ma_approx_var.set(f"（{ma_win}個ぶん）")
+
+    def _on_ok(self):
+        self.result = {
+            "ma_window": self.ma_var.get(),
+        }
+        self.destroy()
 
 
 # =========================
@@ -489,6 +702,59 @@ def analyze(data):
 
 
 # =========================
+# ■ 合否判定
+# =========================
+def _compute_judgment(defect_rate, outlier_rate):
+    # 不良率: <1% OK / 1〜3% 要確認 / 3%以上 問題あり
+    if defect_rate < 1.0:
+        defect_level = "ok"
+    elif defect_rate < 3.0:
+        defect_level = "caution"
+    else:
+        defect_level = "ng"
+
+    # 外れ値率: <0.5% OK / 0.5〜1% 要確認 / 1%以上 問題あり
+    if outlier_rate < 0.5:
+        outlier_level = "ok"
+    elif outlier_rate < 1.0:
+        outlier_level = "caution"
+    else:
+        outlier_level = "ng"
+
+    _rank   = {"ok": 0, "caution": 1, "ng": 2}
+    overall = max(defect_level, outlier_level, key=lambda x: _rank[x])
+    return {
+        "overall":       overall,
+        "defect_rate":   defect_rate,
+        "outlier_rate":  outlier_rate,
+        "defect_level":  defect_level,
+        "outlier_level": outlier_level,
+    }
+
+
+def _quick_lot_stats(group):
+    """プレビュー用: (defect_rate, outlier_rate_or_None) を返す（高速・簡易版）"""
+    total    = len(group)
+    ng_count = total - int((group["ランクコード"] == "2").sum())
+    defect_rate = ng_count / total * 100 if total > 0 else 0.0
+
+    data = pd.to_numeric(
+        group.loc[group["ランクコード"] == "2", "測定値(g)"], errors="coerce"
+    ).dropna().values
+
+    if len(data) < 2:
+        return defect_rate, None
+
+    std = float(np.std(data, ddof=1))
+    if std == 0:
+        return defect_rate, 0.0
+
+    mean = float(np.mean(data))
+    outlier_count = int(((data < mean - 3 * std) | (data > mean + 3 * std)).sum())
+    return defect_rate, outlier_count / len(data) * 100
+
+
+# =========================
 # ■ Excel出力
 # =========================
 def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
@@ -497,7 +763,8 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
                           img_all_series_bytes=None,
                           mfg_start="−", mfg_end="−", mfg_duration="−",
                           spec_nominal=None, usl=None, lsl=None,
-                          lot_display=None, product_display=None):
+                          lot_display=None, product_display=None,
+                          judgment=None):
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.drawing.image import Image
 
@@ -514,6 +781,8 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
     val_fill_o  = PatternFill(start_color="FFEFF3FB", fill_type="solid")
     warn_fill   = PatternFill(start_color="FFFFF2CC", fill_type="solid")
     warn_font   = Font(bold=True, size=10, color="FF7F6000")
+    ng_fill     = PatternFill(start_color="FFFFE7E7", fill_type="solid")
+    ng_font     = Font(bold=True, size=10, color="FF9C0006")
     thin = Border(
         left=Side(style="thin"), right=Side(style="thin"),
         top=Side(style="thin"), bottom=Side(style="thin")
@@ -528,8 +797,9 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
     for col in ["E", "F", "G", "H", "I", "J", "K"]:
         ws.column_dimensions[col].width = 10.4  # E〜K合計 ≈ 13.5cm
 
-    ng_count    = total_count - original_ok_count
-    defect_rate = (ng_count / total_count * 100) if total_count > 0 else 0.0
+    ng_count        = total_count - original_ok_count
+    defect_rate     = (ng_count / total_count * 100) if total_count > 0 else 0.0
+    outlier_4_count = int((outliers_df["区分"] == "±4σ超").sum()) if "区分" in outliers_df.columns else 0
 
     # タイトル行
     lot_display_str = lot_display if lot_display else f"ロット{lot}"
@@ -551,6 +821,22 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
     ws["K1"].font      = Font(bold=True, size=11, color="FFFFFFFF")
     ws["K1"].fill      = title_fill
     ws["K1"].alignment = Alignment(horizontal="right", vertical="center", indent=1)
+
+    # 合否判定（Row 2, A2:C2）
+    if judgment is not None:
+        _verdict_style = {
+            "ok":      ("FF00B050", "FFFFFFFF", "○  問題なし"),
+            "caution": ("FFFFC000", "FF000000", "△  要確認"),
+            "ng":      ("FFFF0000", "FFFFFFFF", "×  問題あり"),
+        }
+        bg_color, fg_color, verdict_text = _verdict_style[judgment["overall"]]
+        ws.merge_cells("A2:C2")
+        ws["A2"] = verdict_text
+        ws["A2"].font      = Font(bold=True, size=18, color=fg_color)
+        ws["A2"].fill      = PatternFill(start_color=bg_color, fill_type="solid")
+        ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
+        ws["A2"].border    = thin
+        ws.row_dimensions[2].height = 34
 
     # 統計セクションヘッダー
     ws.merge_cells("A3:B3")
@@ -587,7 +873,8 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
         ("下限 −3σ (g)",   lower,             "0.000", False),
         ("上限 +3σ (g)",   upper,             "0.000", False),
         (None, None, None, False),
-        ("外れ値件数",       len(outliers_df),  "0",     len(outliers_df) > 0),
+        ("外れ値件数（±3σ超）", len(outliers_df),  "0", len(outliers_df) > 0),
+        ("  うち ±4σ超",      outlier_4_count,   "0", outlier_4_count > 0),
     ]
     if usl is not None:
         stats_rows += [
@@ -595,6 +882,15 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
             ("UCL (g)",       usl,          "0.000", False),
             ("LCL (g)",       lsl,          "0.000", False),
         ]
+
+    if judgment is not None:
+        j_prefix = [
+            ("__subheader__", "判定詳細", None, False),
+            ("不良率 (%)",   judgment["defect_rate"],  "0.00", judgment["defect_level"]),
+            ("外れ値率 (%)", judgment["outlier_rate"], "0.00", judgment["outlier_level"]),
+            (None, None, None, False),
+        ]
+        stats_rows = j_prefix + stats_rows
 
     subheader_fill = PatternFill(start_color="FF8EA9C1", fill_type="solid")
     subheader_font = Font(bold=True, size=9, color="FFFFFFFF")
@@ -618,8 +914,13 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
             continue
 
         ws.row_dimensions[data_row].height = 14
-        vfill = warn_fill if warn else (val_fill_e if stripe % 2 == 0 else val_fill_o)
-        vfont = warn_font if warn else Font(size=10)
+        if warn == "ng":
+            vfill, vfont = ng_fill, ng_font
+        elif warn == "caution" or warn is True:
+            vfill, vfont = warn_fill, warn_font
+        else:
+            vfill = val_fill_e if stripe % 2 == 0 else val_fill_o
+            vfont = Font(size=10)
 
         ws[f"A{data_row}"] = label
         ws[f"A{data_row}"].font      = label_font
@@ -735,7 +1036,8 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
                   df_all=None, img_all_series=None,
                   mfg_start="−", mfg_end="−", mfg_duration="−",
                   spec_nominal=None, usl=None, lsl=None,
-                  lot_display=None, product_display=None):
+                  lot_display=None, product_display=None,
+                  judgment=None):
 
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.drawing.image import Image
@@ -759,7 +1061,10 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
     with pd.ExcelWriter(filename, engine="openpyxl") as writer:
 
         df_ok[["測定値出力No.", "日付時刻", "測定値(g)"]].to_excel(writer, sheet_name="OKデータ", index=False)
-        outliers_df[["測定値出力No.", "日付時刻", "測定値(g)"]].to_excel(writer, sheet_name="外れ値（±3σ超）", index=False)
+        _out_cols = ["測定値出力No.", "日付時刻", "測定値(g)"]
+        if "区分" in outliers_df.columns:
+            _out_cols.append("区分")
+        outliers_df[_out_cols].to_excel(writer, sheet_name="外れ値（±3σ超）", index=False)
         df_all_out.to_excel(writer, sheet_name="全データ", index=False)
 
         wb = writer.book
@@ -781,29 +1086,43 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
             for cell in row:
                 cell.number_format = "yyyy-mm-dd hh:mm:ss"
         ws_ok.auto_filter.ref = f"A1:C{ws_ok.max_row}"
-        outlier_ids = set(outliers_df["測定値出力No."].values)
+        outlier_4_ids  = set(outliers_df.loc[outliers_df["区分"] == "±4σ超", "測定値出力No."].values) if "区分" in outliers_df.columns else set()
+        outlier_34_ids = set(outliers_df["測定値出力No."].values) - outlier_4_ids
+        amber_fill     = PatternFill(start_color="FFFFC000", fill_type="solid")
         for row in ws_ok.iter_rows(min_row=2, max_row=ws_ok.max_row):
-            if row[0].value in outlier_ids:
+            no = row[0].value
+            if no in outlier_4_ids:
                 for cell in row:
                     cell.fill = red_fill
+            elif no in outlier_34_ids:
+                for cell in row:
+                    cell.fill = amber_fill
 
         # ===== 外れ値シート =====
         ws_out = wb["外れ値（±3σ超）"]
         ws_out.column_dimensions["A"].width = 18
         ws_out.column_dimensions["B"].width = 22
         ws_out.column_dimensions["C"].width = 15
+        if "区分" in outliers_df.columns:
+            ws_out.column_dimensions["D"].width = 10
         for cell in ws_out[1]:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = center_align
             cell.border = border
-        for row in ws_out.iter_rows(min_row=2, min_col=1, max_col=3):
+        for row in ws_out.iter_rows(min_row=2, min_col=1, max_col=ws_out.max_column):
             for cell in row:
                 cell.border = border
         for row in ws_out.iter_rows(min_row=2, min_col=2, max_col=2):
             for cell in row:
                 cell.number_format = "yyyy-mm-dd hh:mm:ss"
         ws_out.auto_filter.ref = f"A1:C{ws_out.max_row}"
+        if "区分" in outliers_df.columns:
+            out_zones = outliers_df["区分"].reset_index(drop=True).tolist()
+            for r_idx, zone in enumerate(out_zones):
+                row_fill = red_fill if zone == "±4σ超" else amber_fill
+                for cell in ws_out[r_idx + 2]:
+                    cell.fill = row_fill
 
         # ===== 全データシート =====
         ws_all = wb["全データ"]
@@ -849,7 +1168,8 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
             img_all_series_bytes=img_all_series.getvalue() if img_all_series is not None else None,
             mfg_start=mfg_start, mfg_end=mfg_end, mfg_duration=mfg_duration,
             spec_nominal=spec_nominal, usl=usl, lsl=lsl,
-            lot_display=lot_display, product_display=product_display
+            lot_display=lot_display, product_display=product_display,
+            judgment=judgment
         )
 
         # ===== シート順序を整理 =====
@@ -902,7 +1222,18 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
 
     mean, std, ci, max1, min1, lower, upper = analyze(data)
 
-    outliers_df = df_ok[(df_ok["測定値(g)"] < lower) | (df_ok["測定値(g)"] > upper)]
+    lower4 = mean - 4 * std
+    upper4 = mean + 4 * std
+    outliers_df = df_ok[(df_ok["測定値(g)"] < lower) | (df_ok["測定値(g)"] > upper)].copy()
+    outliers_df["区分"] = np.where(
+        (outliers_df["測定値(g)"] < lower4) | (outliers_df["測定値(g)"] > upper4),
+        "±4σ超", "±3σ超"
+    )
+
+    ng_count     = total_count - original_ok_count
+    defect_rate  = (ng_count / total_count * 100) if total_count > 0 else 0.0
+    outlier_rate = len(outliers_df) / len(df_ok) * 100 if len(df_ok) > 0 else 0.0
+    judgment = _compute_judgment(defect_rate, outlier_rate)
 
     # ===== 規格値・工程能力 =====
     spec_nominal = usl = lsl = None
@@ -970,31 +1301,39 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     fig2, ax2 = plt.subplots(figsize=(12, 5))
 
     y_vals = df_ok["測定値(g)"].values
-    outlier_mask = (df_ok["測定値(g)"] < lower) | (df_ok["測定値(g)"] > upper)
+    outlier_mask    = (df_ok["測定値(g)"] < lower)  | (df_ok["測定値(g)"] > upper)
+    outlier_4_mask  = (df_ok["測定値(g)"] < lower4) | (df_ok["測定値(g)"] > upper4)
+    outlier_34_mask = outlier_mask & ~outlier_4_mask
     has_datetime = df_ok["日付時刻"].notna().any()
 
     if has_datetime:
-        x_all = df_ok["日付時刻"]
-        x_ok  = df_ok.loc[~outlier_mask, "日付時刻"]
-        x_out = df_ok.loc[outlier_mask,  "日付時刻"]
+        x_all    = df_ok["日付時刻"]
+        x_ok     = df_ok.loc[~outlier_mask,   "日付時刻"]
+        x_out_34 = df_ok.loc[outlier_34_mask, "日付時刻"]
+        x_out_4  = df_ok.loc[outlier_4_mask,  "日付時刻"]
         ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
         plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right")
         ax2.set_xlabel("時刻", fontsize=12)
     else:
-        x_all = np.arange(1, len(df_ok) + 1)
-        x_ok  = x_all[~outlier_mask.values]
-        x_out = x_all[outlier_mask.values]
+        x_all    = np.arange(1, len(df_ok) + 1)
+        x_ok     = x_all[~outlier_mask.values]
+        x_out_34 = x_all[outlier_34_mask.values]
+        x_out_4  = x_all[outlier_4_mask.values]
         ax2.set_xlabel("測定順序", fontsize=12)
 
-    y_ok  = y_vals[~outlier_mask.values]
-    y_out = y_vals[outlier_mask.values]
+    y_ok     = y_vals[~outlier_mask.values]
+    y_out_34 = y_vals[outlier_34_mask.values]
+    y_out_4  = y_vals[outlier_4_mask.values]
 
     ax2.plot(x_all, y_vals, color="steelblue", linewidth=0.6, alpha=0.4, zorder=1)
     ax2.scatter(x_ok, y_ok, color="steelblue", s=18, alpha=0.8, zorder=2, label="OK")
-    if len(x_out) > 0:
-        ax2.scatter(x_out, y_out, color="red", s=50, marker="x",
-                    linewidths=2, zorder=3, label=f"外れ値・±3σ超 ({len(x_out)}件)")
+    if outlier_34_mask.sum() > 0:
+        ax2.scatter(x_out_34, y_out_34, color="orange", s=60, marker="x",
+                    linewidths=2, zorder=3, label=f"±3〜4σ超 ({outlier_34_mask.sum()}件)")
+    if outlier_4_mask.sum() > 0:
+        ax2.scatter(x_out_4, y_out_4, color="crimson", s=100, marker="*",
+                    zorder=4, label=f"±4σ超！ ({outlier_4_mask.sum()}件)")
 
     ax2.axhline(mean,  color="red",    linewidth=1.5, linestyle="-",  label=f"平均: {mean:.3f}")
     if spec_nominal is not None:
@@ -1002,6 +1341,8 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                     label=f"基準値: {spec_nominal:.3f}")
     ax2.axhline(upper, color="orange", linewidth=1.5, linestyle="--", label=f"+3σ: {upper:.3f}")
     ax2.axhline(lower, color="orange", linewidth=1.5, linestyle="--", label=f"-3σ: {lower:.3f}")
+    ax2.axhline(upper4, color="darkred", linewidth=1.0, linestyle=":", label=f"+4σ: {upper4:.3f}")
+    ax2.axhline(lower4, color="darkred", linewidth=1.0, linestyle=":", label=f"-4σ: {lower4:.3f}")
     if usl is not None:
         ax2.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f}")
         ax2.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f}")
@@ -1031,10 +1372,24 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     y_kacho_all = y_vals_all[kacho_mask].values
     y_keiry_all = y_vals_all[keiry_mask].values
 
+    # OK品を σ別に分類（全データ図用）
+    _out_nos    = set(outliers_df["測定値出力No."])
+    _out_4_nos  = set(outliers_df.loc[outliers_df["区分"] == "±4σ超", "測定値出力No."])
+    _out_34_nos = _out_nos - _out_4_nos
+    ok_34_m   = ok_mask & group_sorted["測定値出力No."].isin(_out_34_nos)
+    ok_4_m    = ok_mask & group_sorted["測定値出力No."].isin(_out_4_nos)
+    ok_norm_m = ok_mask & ~group_sorted["測定値出力No."].isin(_out_nos)
+    y_ok_norm = y_vals_all[ok_norm_m].values
+    y_ok_34   = y_vals_all[ok_34_m].values
+    y_ok_4    = y_vals_all[ok_4_m].values
+
     fig3, ax3 = plt.subplots(figsize=(12, 5))
 
     if group_sorted["日付時刻"].notna().any():
         x_ok_all    = group_sorted.loc[ok_mask,    "日付時刻"]
+        x_ok_norm   = group_sorted.loc[ok_norm_m,  "日付時刻"]
+        x_ok_34     = group_sorted.loc[ok_34_m,    "日付時刻"]
+        x_ok_4      = group_sorted.loc[ok_4_m,     "日付時刻"]
         x_kacho_all = group_sorted.loc[kacho_mask, "日付時刻"]
         x_keiry_all = group_sorted.loc[keiry_mask, "日付時刻"]
         x_all_for_ma = group_sorted["日付時刻"]
@@ -1043,16 +1398,25 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         plt.setp(ax3.xaxis.get_majorticklabels(), rotation=30, ha="right")
         ax3.set_xlabel("時刻", fontsize=12)
     else:
-        x_base       = np.arange(1, len(group_sorted) + 1)
-        x_ok_all     = x_base[ok_mask.values]
-        x_kacho_all  = x_base[kacho_mask.values]
-        x_keiry_all  = x_base[keiry_mask.values]
+        x_base      = np.arange(1, len(group_sorted) + 1)
+        x_ok_all    = x_base[ok_mask.values]
+        x_ok_norm   = x_base[ok_norm_m.values]
+        x_ok_34     = x_base[ok_34_m.values]
+        x_ok_4      = x_base[ok_4_m.values]
+        x_kacho_all = x_base[kacho_mask.values]
+        x_keiry_all = x_base[keiry_mask.values]
         x_all_for_ma = x_base
         ax3.set_xlabel("測定順序", fontsize=12)
 
     ax3.plot(x_ok_all, y_ok_all, color="steelblue", linewidth=0.6, alpha=0.4, zorder=1)
-    ax3.scatter(x_ok_all, y_ok_all, color="steelblue", s=18, alpha=0.8, zorder=2,
-                label=f"OK ({ok_mask.sum()}件)")
+    ax3.scatter(x_ok_norm, y_ok_norm, color="steelblue", s=18, alpha=0.8, zorder=2,
+                label=f"OK ({ok_norm_m.sum()}件)")
+    if ok_34_m.any():
+        ax3.scatter(x_ok_34, y_ok_34, color="orange", s=60, marker="x",
+                    linewidths=2, zorder=3, label=f"±3〜4σ超 ({ok_34_m.sum()}件)")
+    if ok_4_m.any():
+        ax3.scatter(x_ok_4, y_ok_4, color="crimson", s=100, marker="*",
+                    zorder=4, label=f"±4σ超！ ({ok_4_m.sum()}件)")
     if kacho_mask.any():
         ax3.scatter(x_kacho_all, y_kacho_all, color="red", s=60, marker="^", zorder=4,
                     label=f"過量 ({kacho_mask.sum()}件)")
@@ -1066,6 +1430,8 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                     label=f"基準値: {spec_nominal:.3f}")
     ax3.axhline(upper, color="darkorange", linewidth=1.5, linestyle="--", label=f"+3σ（OK品）: {upper:.3f}")
     ax3.axhline(lower, color="darkorange", linewidth=1.5, linestyle="--", label=f"-3σ（OK品）: {lower:.3f}")
+    ax3.axhline(upper4, color="darkred", linewidth=1.0, linestyle=":", label=f"+4σ（OK品）: {upper4:.3f}")
+    ax3.axhline(lower4, color="darkred", linewidth=1.0, linestyle=":", label=f"-4σ（OK品）: {lower4:.3f}")
     ma3_all = y_vals_all.rolling(window=ma_window, min_periods=1).mean()
     ax3.plot(x_all_for_ma, ma3_all.values, color="green", linewidth=2.0,
              alpha=0.9, zorder=5, label=f"移動平均・全数（{ma_window}点）")
@@ -1106,7 +1472,8 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                   df_all=group, img_all_series=img_all_series,
                   mfg_start=mfg_start, mfg_end=mfg_end, mfg_duration=mfg_duration,
                   spec_nominal=spec_nominal, usl=usl, lsl=lsl,
-                  lot_display=lot_display, product_display=product_display)
+                  lot_display=lot_display, product_display=product_display,
+                  judgment=judgment)
 
     return ("ok", len(data))
 
@@ -1223,10 +1590,27 @@ def process_file(file):
 # =========================
 # ■ メイン
 # =========================
-def run():
-    files = filedialog.askopenfilenames(filetypes=[("CSV files", "*.csv")])
-    if files:
-        process_files(list(files))
+def run_folder(initialdir=None):
+    folder = filedialog.askdirectory(
+        title="CSVが入ったフォルダーを選択してください",
+        initialdir=initialdir,
+    )
+    if not folder:
+        return
+    run_folder_path(folder)
+
+
+def run_folder_path(folder):
+    files = sorted([
+        os.path.join(folder, f)
+        for f in os.listdir(folder)
+        if f.lower().endswith(".csv")
+    ])
+    if not files:
+        messagebox.showwarning("CSVなし",
+            f"選択したフォルダーにCSVファイルが見つかりません。\n{folder}")
+        return
+    process_files(files)
 
 
 def on_closing():
@@ -1239,8 +1623,8 @@ if __name__ == "__main__":
     app_root.title("重量分析ツール")
     app_root.protocol("WM_DELETE_WINDOW", on_closing)
 
-    btn = tk.Button(app_root, text="CSV選択して解析", command=run, height=2, width=30)
-    btn.pack(pady=20)
+    tk.Button(app_root, text="フォルダーを選択してください",
+              command=run_folder, height=2, width=30).pack(pady=20)
 
     app_root.update_idletasks()
     w = app_root.winfo_width()
@@ -1250,7 +1634,14 @@ if __name__ == "__main__":
     app_root.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
 
     if len(sys.argv) > 1:
-        csv_file_to_process = sys.argv[1]
-        app_root.after(500, lambda: process_file(csv_file_to_process))
+        if sys.argv[1] == "--browse" and len(sys.argv) > 2:
+            initialdir = sys.argv[2]
+            app_root.after(500, lambda: run_folder(initialdir=initialdir))
+        elif os.path.isdir(sys.argv[1]):
+            arg = sys.argv[1]
+            app_root.after(500, lambda: run_folder_path(arg))
+        else:
+            arg = sys.argv[1]
+            app_root.after(500, lambda: process_file(arg))
 
     app_root.mainloop()

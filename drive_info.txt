@@ -1,0 +1,3 @@
+﻿C:\  type=3(FIXED)  label='Windows'  match=False
+D:\  type=5(CDROM)  label=''  match=False
+F:\  type=2(REMOVABLE)  label='緑3F瓶充填'  match=True
