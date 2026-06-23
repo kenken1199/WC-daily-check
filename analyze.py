@@ -229,7 +229,7 @@ class LotPreviewDialog(tk.Toplevel):
 class SpecInputDialog(tk.Toplevel):
     """
     result: "skip" | (nominal_or_None, ucl_or_None, lcl_or_None)
-      nominal: 基準値 — None のとき先頭5個OK品平均を自動使用
+      nominal: 基準値 — None のときOK品全体平均を自動使用
       ucl/lcl: 上限値/下限値 — None のとき規格線なし（非対称も可）
     """
 
@@ -275,7 +275,7 @@ class SpecInputDialog(tk.Toplevel):
         self.nominal_var.trace_add("write", self._update_preview)
         ttk.Entry(frame, textvariable=self.nominal_var, width=12).grid(
             row=3, column=1, sticky="w", padx=5, pady=(8, 0))
-        ttk.Label(frame, text="※空白で先頭5個の平均を自動使用",
+        ttk.Label(frame, text="※空白でOK品全体の平均を自動使用",
                   foreground="gray").grid(row=3, column=2, sticky="w", pady=(8, 0))
 
         ttk.Label(frame, text="上側許容幅 (g):").grid(row=4, column=0, sticky="w", pady=(8, 0))
@@ -497,6 +497,8 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
                           img_all_series_bytes=None,
                           mfg_start="−", mfg_end="−", mfg_duration="−",
                           spec_nominal=None, usl=None, lsl=None,
+                          upper_offset=None, lower_offset=None,
+                          over_usl_count=None, under_lsl_count=None,
                           lot_display=None, product_display=None):
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl.drawing.image import Image
@@ -590,11 +592,17 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
         ("外れ値件数",       len(outliers_df),  "0",     len(outliers_df) > 0),
     ]
     if usl is not None:
+        ucl_label = f"UCL (基準値+{upper_offset:.3f}) (g)" if upper_offset is not None else "UCL (g)"
+        lcl_label = f"LCL (基準値-{lower_offset:.3f}) (g)" if lower_offset is not None else "LCL (g)"
         stats_rows += [
             ("__subheader__", "規格値",     None,    False),
-            ("UCL (g)",       usl,          "0.000", False),
-            ("LCL (g)",       lsl,          "0.000", False),
+            (ucl_label,       usl,          "0.000", False),
+            (lcl_label,       lsl,          "0.000", False),
         ]
+        if over_usl_count is not None:
+            stats_rows.append(("UCL超え件数（全数）", over_usl_count, "0", over_usl_count > 0))
+        if under_lsl_count is not None:
+            stats_rows.append(("LCL未満件数（全数）", under_lsl_count, "0", under_lsl_count > 0))
 
     subheader_fill = PatternFill(start_color="FF8EA9C1", fill_type="solid")
     subheader_font = Font(bold=True, size=9, color="FFFFFFFF")
@@ -735,6 +743,8 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
                   df_all=None, img_all_series=None,
                   mfg_start="−", mfg_end="−", mfg_duration="−",
                   spec_nominal=None, usl=None, lsl=None,
+                  upper_offset=None, lower_offset=None,
+                  over_usl_count=None, under_lsl_count=None,
                   lot_display=None, product_display=None):
 
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -849,6 +859,8 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
             img_all_series_bytes=img_all_series.getvalue() if img_all_series is not None else None,
             mfg_start=mfg_start, mfg_end=mfg_end, mfg_duration=mfg_duration,
             spec_nominal=spec_nominal, usl=usl, lsl=lsl,
+            upper_offset=upper_offset, lower_offset=lower_offset,
+            over_usl_count=over_usl_count, under_lsl_count=under_lsl_count,
             lot_display=lot_display, product_display=product_display
         )
 
@@ -905,18 +917,21 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     outliers_df = df_ok[(df_ok["測定値(g)"] < lower) | (df_ok["測定値(g)"] > upper)]
 
     # ===== 規格値・工程能力 =====
-    spec_nominal = usl = lsl = None
+    spec_nominal = usl = lsl = upper_offset = lower_offset = None
     if spec is not None:
         input_nominal, upper_offset, lower_offset = spec
-        # 基準値：入力値 or 先頭5個OK品の平均
-        if input_nominal is not None:
-            spec_nominal = input_nominal
-        else:
-            first5 = df_ok.sort_values("日付時刻").head(5)
-            spec_nominal = pd.to_numeric(first5["測定値(g)"], errors="coerce").mean()
+        # 基準値：入力値 or OK品全体の平均
+        spec_nominal = input_nominal if input_nominal is not None else mean
         # UCL = 基準値 + 上側許容幅、LCL = 基準値 − 下側許容幅（非対称対応）
         usl = spec_nominal + upper_offset if upper_offset is not None else None
         lsl = spec_nominal - lower_offset if lower_offset is not None else None
+
+    # 全データのうちUCL/LCLを超えた件数
+    over_usl_count = under_lsl_count = None
+    if usl is not None or lsl is not None:
+        all_values = pd.to_numeric(group["測定値(g)"], errors="coerce")
+        over_usl_count  = int((all_values > usl).sum()) if usl is not None else None
+        under_lsl_count = int((all_values < lsl).sum()) if lsl is not None else None
 
     lot_display = lot_label if lot_label else f"ロット{lot}"
     lot_display_safe = lot_display.translate(str.maketrans('\\/:*?"<>|', '_________'))
@@ -952,12 +967,12 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     ax1.axvline(lower, color="orange", linestyle="--", linewidth=2, label=f"下限(-3σ): {lower:.3f}")
     ax1.axvline(upper, color="orange", linestyle="--", linewidth=2, label=f"上限(+3σ): {upper:.3f}")
     if usl is not None:
-        ax1.axvline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f}")
-        ax1.axvline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f}")
+        ax1.axvline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
+        ax1.axvline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
     ax1.set_title(f"{chart_prefix}{lot_display}　測定値の分布（OK品のみ・n={len(data)}）", fontsize=14, fontweight="bold")
     ax1.set_xlabel("測定値(g)", fontsize=12)
     ax1.set_ylabel("頻度", fontsize=12)
-    ax1.legend(fontsize=10)
+    ax1.legend(fontsize=10, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0)
     ax1.grid(True, alpha=0.3)
     fig1.tight_layout()
 
@@ -996,6 +1011,17 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         ax2.scatter(x_out, y_out, color="red", s=50, marker="x",
                     linewidths=2, zorder=3, label=f"外れ値・±3σ超 ({len(x_out)}件)")
 
+        x_out_arr = np.asarray(x_out)
+        max_idx = int(np.argmax(y_out))
+        min_idx = int(np.argmin(y_out))
+        for idx, voffset in [(max_idx, 18), (min_idx, -18)]:
+            ax2.annotate(f"{y_out[idx]:.3f}", (x_out_arr[idx], y_out[idx]),
+                        textcoords="offset points", xytext=(0, voffset),
+                        ha="center", va="center", fontsize=9, color="red", fontweight="bold",
+                        zorder=6, bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
+                                             edgecolor="red", alpha=0.9),
+                        arrowprops=dict(arrowstyle="-", color="red", linewidth=0.8))
+
     ax2.axhline(mean,  color="red",    linewidth=1.5, linestyle="-",  label=f"平均: {mean:.3f}")
     if spec_nominal is not None:
         ax2.axhline(spec_nominal, color="navy", linewidth=1.5, linestyle=":",
@@ -1003,15 +1029,20 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     ax2.axhline(upper, color="orange", linewidth=1.5, linestyle="--", label=f"+3σ: {upper:.3f}")
     ax2.axhline(lower, color="orange", linewidth=1.5, linestyle="--", label=f"-3σ: {lower:.3f}")
     if usl is not None:
-        ax2.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f}")
-        ax2.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f}")
+        ax2.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
+        ax2.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
     ma2 = pd.Series(y_vals).rolling(window=ma_window, min_periods=1).mean()
     ax2.plot(x_all, ma2.values, color="green", linewidth=2.0,
              alpha=0.9, zorder=5, label=f"移動平均（{ma_window}点）")
 
+    margin2 = std * 0.5
+    y_lo2 = min(y_vals.min(), lower, lsl) if lsl is not None else min(y_vals.min(), lower)
+    y_hi2 = max(y_vals.max(), upper, usl) if usl is not None else max(y_vals.max(), upper)
+    ax2.set_ylim(y_lo2 - margin2, y_hi2 + margin2)
+
     ax2.set_title(f"{chart_prefix}{lot_display}　時系列チャート（OK品のみ・n={len(df_ok)}）", fontsize=14, fontweight="bold")
     ax2.set_ylabel("測定値(g)", fontsize=12)
-    ax2.legend(fontsize=10)
+    ax2.legend(fontsize=10, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0)
     ax2.grid(True, alpha=0.3)
     fig2.tight_layout()
 
@@ -1070,15 +1101,15 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     ax3.plot(x_all_for_ma, ma3_all.values, color="green", linewidth=2.0,
              alpha=0.9, zorder=5, label=f"移動平均・全数（{ma_window}点）")
     if usl is not None:
-        ax3.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f}")
-        ax3.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f}")
-    y_lo = min(mean - 5 * std, lsl - std * 0.5) if lsl is not None else mean - 5 * std
-    y_hi = max(mean + 5 * std, usl + std * 0.5) if usl is not None else mean + 5 * std
+        ax3.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
+        ax3.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
+    y_lo = min(mean - 10 * std, lsl - std * 3) if lsl is not None else mean - 10 * std
+    y_hi = max(mean + 10 * std, usl + std * 3) if usl is not None else mean + 10 * std
     ax3.set_ylim(y_lo, y_hi)
 
     ax3.set_title(f"{chart_prefix}{lot_display}　全データ時系列（n={len(group_sorted)}）", fontsize=14, fontweight="bold")
     ax3.set_ylabel("測定値(g)", fontsize=12)
-    ax3.legend(fontsize=10)
+    ax3.legend(fontsize=10, loc="upper left", bbox_to_anchor=(1.02, 1), borderaxespad=0)
     ax3.grid(True, alpha=0.3)
     fig3.tight_layout()
 
@@ -1106,6 +1137,8 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                   df_all=group, img_all_series=img_all_series,
                   mfg_start=mfg_start, mfg_end=mfg_end, mfg_duration=mfg_duration,
                   spec_nominal=spec_nominal, usl=usl, lsl=lsl,
+                  upper_offset=upper_offset, lower_offset=lower_offset,
+                  over_usl_count=over_usl_count, under_lsl_count=under_lsl_count,
                   lot_display=lot_display, product_display=product_display)
 
     return ("ok", len(data))
