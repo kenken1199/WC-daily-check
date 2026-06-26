@@ -17,7 +17,6 @@ import sys
 # ■ 定数
 # =========================
 MIN_OK_COUNT = 2    # 統計分析に必要な最小OKデータ数
-MA_WINDOW    = 500  # 時系列グラフの移動平均ウィンドウ幅（デフォルト）
 
 
 def _hinshoku_display(hinshoku_num):
@@ -39,7 +38,6 @@ def _setup_japanese_font():
 _setup_japanese_font()
 
 app_root = None
-csv_file_to_process = None
 
 
 # =========================
@@ -60,31 +58,21 @@ class LotPreviewDialog(tk.Toplevel):
         frame_top = ttk.Frame(self, padding=10)
         frame_top.pack(fill="x")
 
-        ttk.Label(frame_top, text="分割しきい値（分）:").pack(side="left")
+        ttk.Label(frame_top, text="この時間以上データが空いたら新しいロットとして区切る:").pack(anchor="w")
+
         self.threshold_var = tk.IntVar(value=30)
-        ttk.Spinbox(
-            frame_top, from_=1, to=480,
-            textvariable=self.threshold_var, width=6
-        ).pack(side="left", padx=5)
-        ttk.Button(frame_top, text="更新", command=self._update_preview).pack(side="left", padx=5)
+
+        frame_presets = ttk.Frame(frame_top)
+        frame_presets.pack(fill="x", pady=(4, 0))
+        for minutes, label in ((10, "10分"), (15, "15分"), (30, "30分"), (45, "45分"), (60, "1時間")):
+            ttk.Radiobutton(
+                frame_presets, text=label, style="Toolbutton",
+                variable=self.threshold_var, value=minutes,
+                command=self._update_preview
+            ).pack(side="left", padx=(0, 4))
 
         self.lot_label_var = tk.StringVar()
-        ttk.Label(frame_top, textvariable=self.lot_label_var, foreground="navy").pack(side="left", padx=15)
-
-        # --- 移動平均ウィンドウ入力 ---
-        frame_ma = ttk.Frame(self, padding=(10, 0, 10, 5))
-        frame_ma.pack(fill="x")
-
-        ttk.Label(frame_ma, text="移動平均ウィンドウ:").pack(side="left")
-        self.ma_window_var = tk.IntVar(value=MA_WINDOW)
-        ttk.Spinbox(
-            frame_ma, from_=10, to=5000,
-            textvariable=self.ma_window_var, width=7,
-            command=self._update_ma_label
-        ).pack(side="left", padx=5)
-        ttk.Label(frame_ma, text="点").pack(side="left")
-        self.ma_approx_var = tk.StringVar()
-        ttk.Label(frame_ma, textvariable=self.ma_approx_var, foreground="gray").pack(side="left", padx=8)
+        ttk.Label(frame_top, textvariable=self.lot_label_var, foreground="navy").pack(anchor="w", pady=(4, 0))
 
         # --- Treeview ---
         frame_tree = ttk.Frame(self, padding=10)
@@ -115,10 +103,9 @@ class LotPreviewDialog(tk.Toplevel):
         # --- ボタン ---
         frame_btn = ttk.Frame(self, padding=(10, 5, 10, 10))
         frame_btn.pack(fill="x")
-        ttk.Button(frame_btn, text="この分割でOK", command=self._on_ok).pack(side="left", padx=5)
-        ttk.Button(frame_btn, text="ロット分割しない", command=self._on_no_split).pack(side="left", padx=5)
-        ttk.Button(frame_btn, text="手動分割する", command=self._on_manual).pack(side="left", padx=5)
         ttk.Button(frame_btn, text="キャンセル", command=self._on_cancel).pack(side="right", padx=5)
+        ttk.Button(frame_btn, text="ロット分割しない", command=self._on_no_split).pack(side="right", padx=5)
+        ttk.Button(frame_btn, text="この分割でOK", command=self._on_ok).pack(side="right", padx=5)
 
         self._update_preview()
 
@@ -132,22 +119,6 @@ class LotPreviewDialog(tk.Toplevel):
         df["時間差(分)"] = df["日付時刻"].diff().dt.total_seconds() / 60
         df["ロット"] = (df["時間差(分)"] > threshold_min).cumsum() + 1
         return df
-
-    def _update_ma_label(self):
-        try:
-            ma_win = self.ma_window_var.get()
-        except tk.TclError:
-            return
-        df_sorted = self.df.sort_values("日付時刻")
-        valid_times = df_sorted["日付時刻"].dropna()
-        if len(valid_times) >= 2:
-            total_min = (valid_times.max() - valid_times.min()).total_seconds() / 60
-            if total_min > 0:
-                rate = len(df_sorted) / total_min
-                approx_min = ma_win / rate
-                self.ma_approx_var.set(f"≈ {approx_min:.0f}分ぶん（{ma_win}個ぶん）")
-                return
-        self.ma_approx_var.set(f"（{ma_win}個ぶん）")
 
     def _update_preview(self):
         threshold = self.threshold_var.get()
@@ -199,168 +170,19 @@ class LotPreviewDialog(tk.Toplevel):
             self.warn_label_var.set("")
 
         self._df_with_lots = df
-        self._update_ma_label()
 
     def _on_ok(self):
-        self.ma_window = self.ma_window_var.get()
         self.result = ("ok", self._df_with_lots)
         self.destroy()
 
     def _on_no_split(self):
-        self.ma_window = self.ma_window_var.get()
         df = self.df.copy()
         df["ロット"] = 1
         self.result = ("ok", df)
         self.destroy()
 
-    def _on_manual(self):
-        self.result = ("manual", None)
-        self.destroy()
-
     def _on_cancel(self):
         self.result = ("cancel", None)
-        self.destroy()
-
-
-
-# =========================
-# ■ 規格値入力ダイアログ
-# =========================
-class SpecInputDialog(tk.Toplevel):
-    """
-    result: "skip" | (nominal_or_None, ucl_or_None, lcl_or_None)
-      nominal: 基準値 — None のときOK品全体平均を自動使用
-      ucl/lcl: 上限値/下限値 — None のとき規格線なし（非対称も可）
-    """
-
-    def __init__(self, parent, hinshoku_num=None, lot=None, ok_count=None):
-        super().__init__(parent)
-        lot_label = f"ロット{lot}" if lot is not None else ""
-        self.title(f"規格値入力　{lot_label}".strip())
-        self.result = "skip"
-        self.lot_label = None
-        self.product_name = None
-        self.resizable(False, False)
-        self.grab_set()
-
-        frame = ttk.Frame(self, padding=18)
-        frame.pack(fill="both", expand=True)
-
-        info_parts = []
-        if hinshoku_num is not None:
-            info_parts.append(f"品種番号: {hinshoku_num}")
-        if lot is not None:
-            info_parts.append(f"ロット {lot}")
-        if ok_count is not None:
-            info_parts.append(f"OKデータ {ok_count}件")
-        if info_parts:
-            ttk.Label(frame, text="  /  ".join(info_parts),
-                      font=("", 10, "bold")).grid(row=0, column=0, columnspan=3,
-                                                   sticky="w", pady=(0, 6))
-
-        ttk.Label(frame, text="製品名 (任意):").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        self.name_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.name_var, width=20).grid(
-            row=1, column=1, columnspan=2, sticky="w", padx=5, pady=(4, 0))
-
-        ttk.Label(frame, text="ロット名 (任意):").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        self.lot_label_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.lot_label_var, width=20).grid(
-            row=2, column=1, sticky="w", padx=5, pady=(8, 0))
-        ttk.Label(frame, text="※空白で「" + lot_label + "」を自動使用",
-                  foreground="gray").grid(row=2, column=2, sticky="w", pady=(8, 0))
-
-        ttk.Label(frame, text="基準値 (g):").grid(row=3, column=0, sticky="w", pady=(8, 0))
-        self.nominal_var = tk.StringVar()
-        self.nominal_var.trace_add("write", self._update_preview)
-        ttk.Entry(frame, textvariable=self.nominal_var, width=12).grid(
-            row=3, column=1, sticky="w", padx=5, pady=(8, 0))
-        ttk.Label(frame, text="※空白でOK品全体の平均を自動使用",
-                  foreground="gray").grid(row=3, column=2, sticky="w", pady=(8, 0))
-
-        ttk.Label(frame, text="上側許容幅 (g):").grid(row=4, column=0, sticky="w", pady=(8, 0))
-        self.upper_var = tk.StringVar()
-        self.upper_var.trace_add("write", self._update_preview)
-        ttk.Entry(frame, textvariable=self.upper_var, width=12).grid(
-            row=4, column=1, sticky="w", padx=5, pady=(8, 0))
-        ttk.Label(frame, text="基準値より何g上か（空白で規格線なし）",
-                  foreground="gray").grid(row=4, column=2, sticky="w", pady=(8, 0))
-
-        ttk.Label(frame, text="下側許容幅 (g):").grid(row=5, column=0, sticky="w", pady=(4, 0))
-        self.lower_var = tk.StringVar()
-        self.lower_var.trace_add("write", self._update_preview)
-        ttk.Entry(frame, textvariable=self.lower_var, width=12).grid(
-            row=5, column=1, sticky="w", padx=5, pady=(4, 0))
-        ttk.Label(frame, text="基準値より何g下か",
-                  foreground="gray").grid(row=5, column=2, sticky="w", pady=(4, 0))
-
-        self.preview_var = tk.StringVar(value="→ UCL: −    LCL: −")
-        ttk.Label(frame, textvariable=self.preview_var,
-                  foreground="navy").grid(row=6, column=0, columnspan=3,
-                                          pady=(10, 0), sticky="w")
-
-        btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=7, column=0, columnspan=3, pady=(12, 0))
-        ttk.Button(btn_frame, text="OK",     command=self._on_ok).pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="スキップ", command=self._on_skip).pack(side="left", padx=5)
-
-        self.update_idletasks()
-        x = parent.winfo_rootx() + (parent.winfo_width()  - self.winfo_width())  // 2
-        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
-        self.geometry(f"+{x}+{y}")
-
-    def _update_preview(self, *_):
-        try:
-            upper = float(self.upper_var.get())
-            lower = float(self.lower_var.get())
-            nominal_str = self.nominal_var.get().strip()
-            if nominal_str:
-                n = float(nominal_str)
-                self.preview_var.set(
-                    f"→ UCL: {n + upper:.3f} g    LCL: {n - lower:.3f} g    幅: {upper + lower:.3f} g")
-            else:
-                self.preview_var.set(
-                    f"→ UCL = 基準値 +{upper:.3f} g    LCL = 基準値 −{lower:.3f} g")
-        except ValueError:
-            self.preview_var.set("→ UCL: −    LCL: −")
-
-    def _on_ok(self):
-        nominal_str = self.nominal_var.get().strip()
-        upper_str   = self.upper_var.get().strip()
-        lower_str   = self.lower_var.get().strip()
-
-        nominal = None
-        if nominal_str:
-            try:
-                nominal = float(nominal_str)
-            except ValueError:
-                messagebox.showwarning("入力エラー", "基準値に数値を入力してください", parent=self)
-                return
-
-        upper = lower = None
-        for val_str, label, attr in [(upper_str, "上側許容幅", "upper"),
-                                     (lower_str, "下側許容幅", "lower")]:
-            if val_str:
-                try:
-                    v = float(val_str)
-                    if v <= 0:
-                        messagebox.showwarning("入力エラー", f"{label}は正の値を入力してください", parent=self)
-                        return
-                    if attr == "upper":
-                        upper = v
-                    else:
-                        lower = v
-                except ValueError:
-                    messagebox.showwarning("入力エラー", f"{label}に数値を入力してください", parent=self)
-                    return
-
-        self.result = (nominal, upper, lower)
-        self.lot_label = self.lot_label_var.get().strip() or None
-        self.product_name = self.name_var.get().strip() or None
-        self.destroy()
-
-    def _on_skip(self):
-        self.result = "skip"
         self.destroy()
 
 
@@ -768,14 +590,14 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
 
     with pd.ExcelWriter(filename, engine="openpyxl") as writer:
 
-        df_ok[["測定値出力No.", "日付時刻", "測定値(g)"]].to_excel(writer, sheet_name="OKデータ", index=False)
-        outliers_df[["測定値出力No.", "日付時刻", "測定値(g)"]].to_excel(writer, sheet_name="外れ値（±3σ超）", index=False)
+        df_ok[["測定値出力No.", "日付時刻", "測定値(g)"]].to_excel(writer, sheet_name="全OKデータ", index=False)
+        outliers_df[["測定値出力No.", "日付時刻", "測定値(g)"]].to_excel(writer, sheet_name="全外れ値（±3σ超）", index=False)
         df_all_out.to_excel(writer, sheet_name="全データ", index=False)
 
         wb = writer.book
 
         # ===== OKデータシート =====
-        ws_ok = wb["OKデータ"]
+        ws_ok = wb["全OKデータ"]
         ws_ok.column_dimensions["A"].width = 18
         ws_ok.column_dimensions["B"].width = 22
         ws_ok.column_dimensions["C"].width = 15
@@ -798,7 +620,7 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
                     cell.fill = red_fill
 
         # ===== 外れ値シート =====
-        ws_out = wb["外れ値（±3σ超）"]
+        ws_out = wb["全外れ値（±3σ超）"]
         ws_out.column_dimensions["A"].width = 18
         ws_out.column_dimensions["B"].width = 22
         ws_out.column_dimensions["C"].width = 15
@@ -871,8 +693,8 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
             "全データ",
             "ヒストグラム（OK品のみ）",
             "時系列チャート（OK品のみ）",
-            "OKデータ",
-            "外れ値（±3σ超）",
+            "全OKデータ",
+            "全外れ値（±3σ超）",
         ]
         wb._sheets.sort(
             key=lambda ws: sheet_order.index(ws.title) if ws.title in sheet_order else len(sheet_order)
@@ -883,7 +705,7 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
 # ■ ロット処理
 # =========================
 def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=None,
-                product_name=None, ma_window=MA_WINDOW):
+                product_name=None):
     """
     1ロット分の分析を行いExcelを出力する。
     spec: None | (nominal_or_None, offset_or_None)
@@ -1031,10 +853,6 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     if usl is not None:
         ax2.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
         ax2.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
-    ma2 = pd.Series(y_vals).rolling(window=ma_window, min_periods=1).mean()
-    ax2.plot(x_all, ma2.values, color="green", linewidth=2.0,
-             alpha=0.9, zorder=5, label=f"移動平均（{ma_window}点）")
-
     margin2 = std * 0.5
     y_lo2 = min(y_vals.min(), lower, lsl) if lsl is not None else min(y_vals.min(), lower)
     y_hi2 = max(y_vals.max(), upper, usl) if usl is not None else max(y_vals.max(), upper)
@@ -1068,7 +886,6 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         x_ok_all    = group_sorted.loc[ok_mask,    "日付時刻"]
         x_kacho_all = group_sorted.loc[kacho_mask, "日付時刻"]
         x_keiry_all = group_sorted.loc[keiry_mask, "日付時刻"]
-        x_all_for_ma = group_sorted["日付時刻"]
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax3.xaxis.set_major_locator(mdates.AutoDateLocator())
         plt.setp(ax3.xaxis.get_majorticklabels(), rotation=30, ha="right")
@@ -1078,7 +895,6 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         x_ok_all     = x_base[ok_mask.values]
         x_kacho_all  = x_base[kacho_mask.values]
         x_keiry_all  = x_base[keiry_mask.values]
-        x_all_for_ma = x_base
         ax3.set_xlabel("測定順序", fontsize=12)
 
     ax3.plot(x_ok_all, y_ok_all, color="steelblue", linewidth=0.6, alpha=0.4, zorder=1)
@@ -1097,9 +913,6 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                     label=f"基準値: {spec_nominal:.3f}")
     ax3.axhline(upper, color="darkorange", linewidth=1.5, linestyle="--", label=f"+3σ（OK品）: {upper:.3f}")
     ax3.axhline(lower, color="darkorange", linewidth=1.5, linestyle="--", label=f"-3σ（OK品）: {lower:.3f}")
-    ma3_all = y_vals_all.rolling(window=ma_window, min_periods=1).mean()
-    ax3.plot(x_all_for_ma, ma3_all.values, color="green", linewidth=2.0,
-             alpha=0.9, zorder=5, label=f"移動平均・全数（{ma_window}点）")
     if usl is not None:
         ax3.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
         ax3.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
@@ -1152,9 +965,28 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
 # =========================
 # ■ ファイル処理
 # =========================
+def _expand_folders(paths):
+    expanded = []
+    for p in paths:
+        if os.path.isdir(p):
+            csvs = sorted(
+                os.path.join(p, name) for name in os.listdir(p)
+                if name.lower().endswith(".csv")
+            )
+            expanded.extend(csvs)
+        else:
+            expanded.append(p)
+    return expanded
+
+
 def process_files(files):
     try:
         if not files:
+            return
+
+        files = _expand_folders(files)
+        if not files:
+            messagebox.showerror("エラー", "選択したフォルダにCSVファイルが見つかりません。")
             return
 
         for f in files:
@@ -1162,7 +994,7 @@ def process_files(files):
                 messagebox.showerror("エラー", f"ファイルが見つかりません: {os.path.basename(f)}")
                 return
 
-        save_dir = os.path.dirname(files[0])
+        save_dir = os.path.join(os.path.expanduser("~"), "Desktop")
 
         df_list = []
         hinshoku_num = None
@@ -1187,29 +1019,11 @@ def process_files(files):
 
         if dialog.result is None or dialog.result[0] == "cancel":
             return
-        if dialog.result[0] == "manual":
-            messagebox.showwarning("中止", "CSVを手動分割してください")
-            return
 
         df = dialog.result[1]
-        ma_window = getattr(dialog, "ma_window", MA_WINDOW)
 
-        # ロットごとに規格値入力
-        spec_per_lot = {}      # lot -> (spec, lot_label, product_name)
-        for lot in sorted(df["ロット"].unique()):
-            g = df[df["ロット"] == lot]
-            ok_count_lot = int((g["ランクコード"] == "2").sum())
-            if ok_count_lot < MIN_OK_COUNT:
-                spec_per_lot[lot] = (None, None, None)
-                continue
-            spec_dialog = SpecInputDialog(app_root, hinshoku_num,
-                                          lot=lot, ok_count=ok_count_lot)
-            app_root.wait_window(spec_dialog)
-            if spec_dialog.result == "skip":
-                spec_per_lot[lot] = (None, None, None)
-            else:
-                spec_per_lot[lot] = (spec_dialog.result, spec_dialog.lot_label,
-                                     spec_dialog.product_name)
+        # ロットごとの規格値（未入力のまま自動算出に任せる）
+        spec_per_lot = {lot: (None, None, None) for lot in df["ロット"].unique()}
 
         # 結果集計
         created_lots = []   # [(lot, ok_count), ...]
@@ -1220,8 +1034,7 @@ def process_files(files):
             lot_spec, lot_label, product_name = spec_per_lot.get(lot, (None, None, None))
             status, ok_count = process_lot(group, lot, save_dir, hinshoku_num,
                                            spec=lot_spec, lot_label=lot_label,
-                                           product_name=product_name,
-                                           ma_window=ma_window)
+                                           product_name=product_name)
             if status == "ok":
                 created_lots.append((lot, ok_count))
             else:
@@ -1237,7 +1050,7 @@ def process_files(files):
             messagebox.showerror("作成失敗", msg)
 
         elif skipped_lots:
-            msg = f"Excel作成完了\n作成: {len(created_lots)}ファイル\n\n"
+            msg = f"Excel作成完了\n作成: {len(created_lots)}ファイル（デスクトップに保存しました）\n\n"
             msg += "⚠ 以下のロットはOKデータ不足のためスキップしました:\n"
             for lot, ok, total in skipped_lots:
                 msg += f"  ・ロット{lot}: 総{total}件 / OK{ok}件\n"
@@ -1247,15 +1060,11 @@ def process_files(files):
         else:
             messagebox.showinfo(
                 "完了",
-                f"Excel作成完了\n{len(created_lots)}ファイルを作成しました。"
+                f"Excel作成完了\n{len(created_lots)}ファイルをデスクトップに保存しました。"
             )
 
     except Exception as e:
         messagebox.showerror("エラー", str(e))
-
-
-def process_file(file):
-    process_files([file])
 
 
 # =========================
@@ -1288,7 +1097,7 @@ if __name__ == "__main__":
     app_root.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
 
     if len(sys.argv) > 1:
-        csv_file_to_process = sys.argv[1]
-        app_root.after(500, lambda: process_file(csv_file_to_process))
+        csv_files_to_process = sys.argv[1:]
+        app_root.after(500, lambda: process_files(csv_files_to_process))
 
     app_root.mainloop()
