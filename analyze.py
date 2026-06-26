@@ -1105,6 +1105,11 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         ax3.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
     y_lo = min(mean - 10 * std, lsl - std * 3) if lsl is not None else mean - 10 * std
     y_hi = max(mean + 10 * std, usl + std * 3) if usl is not None else mean + 10 * std
+    data_min = y_vals_all.min()
+    data_max = y_vals_all.max()
+    margin3 = std * 0.5
+    y_lo = min(y_lo, data_min - margin3)
+    y_hi = max(y_hi, data_max + margin3)
     ax3.set_ylim(y_lo, y_hi)
 
     ax3.set_title(f"{chart_prefix}{lot_display}　全データ時系列（n={len(group_sorted)}）", fontsize=14, fontweight="bold")
