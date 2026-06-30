@@ -18,6 +18,33 @@ import sys
 # =========================
 MIN_OK_COUNT = 2    # 統計分析に必要な最小OKデータ数
 
+# --- 配色（親しみやすいGUI用） ---
+APP_BG       = "#FAF6F0"
+APP_TEXT     = "#3A4750"
+APP_SUBTEXT  = "#7D8A93"
+APP_ACCENT   = "#5B9BD5"
+APP_ACCENT_ACTIVE = "#4A85BB"
+
+
+def _setup_app_style():
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure(".", background=APP_BG, foreground=APP_TEXT, font=("", 10))
+    style.configure("TFrame", background=APP_BG)
+    style.configure("TLabel", background=APP_BG, foreground=APP_TEXT)
+    style.configure("TButton", background="#E8E2D8", foreground=APP_TEXT, padding=6)
+    style.map("TButton", background=[("active", "#DDD6C8")])
+    style.configure("Accent.TButton", background=APP_ACCENT, foreground="white",
+                     padding=8, font=("", 10, "bold"))
+    style.map("Accent.TButton", background=[("active", APP_ACCENT_ACTIVE)],
+              foreground=[("active", "white")])
+    style.configure("Toolbutton", background="white", foreground=APP_TEXT, padding=6)
+    style.map("Toolbutton", background=[("selected", APP_ACCENT)],
+              foreground=[("selected", "white")])
+    style.configure("Treeview", background="white", fieldbackground="white", rowheight=26)
+    style.configure("Treeview.Heading", background="#E8E2D8", foreground=APP_TEXT,
+                     font=("", 10, "bold"))
+
 
 def _hinshoku_display(hinshoku_num):
     return f"品種番号{hinshoku_num}" if hinshoku_num is not None else None
@@ -52,6 +79,7 @@ class LotPreviewDialog(tk.Toplevel):
         self.df = df.copy()
         self.hinshoku_num = hinshoku_num
         self.resizable(True, True)
+        self.configure(bg=APP_BG)
         self.grab_set()
 
         # --- しきい値入力 ---
@@ -105,7 +133,8 @@ class LotPreviewDialog(tk.Toplevel):
         frame_btn.pack(fill="x")
         ttk.Button(frame_btn, text="キャンセル", command=self._on_cancel).pack(side="right", padx=5)
         ttk.Button(frame_btn, text="ロット分割しない", command=self._on_no_split).pack(side="right", padx=5)
-        ttk.Button(frame_btn, text="この分割でOK", command=self._on_ok).pack(side="right", padx=5)
+        ttk.Button(frame_btn, text="この分割でOK", style="Accent.TButton",
+                   command=self._on_ok).pack(side="right", padx=5)
 
         self._update_preview()
 
@@ -1083,11 +1112,25 @@ def on_closing():
 
 if __name__ == "__main__":
     app_root = tk.Tk()
-    app_root.title("重量分析ツール")
+    app_root.title("WC分析ツール")
     app_root.protocol("WM_DELETE_WINDOW", on_closing)
+    _setup_app_style()
 
-    btn = tk.Button(app_root, text="CSV選択して解析", command=run, height=2, width=30)
-    btn.pack(pady=20)
+    app_root.configure(bg=APP_BG)
+
+    frame = tk.Frame(app_root, bg=APP_BG, padx=40, pady=32)
+    frame.pack()
+
+    tk.Label(frame, text="WC分析ツール", font=("", 18, "bold"),
+             bg=APP_BG, fg=APP_TEXT).pack()
+    tk.Label(frame, text="測定データ（CSV）を選んで分析を始めましょう", font=("", 10),
+             bg=APP_BG, fg=APP_SUBTEXT).pack(pady=(4, 24))
+
+    btn = tk.Button(frame, text="CSV選択して解析", command=run, height=2, width=26,
+                     font=("", 11, "bold"), bg=APP_ACCENT, fg="white",
+                     activebackground=APP_ACCENT_ACTIVE, activeforeground="white",
+                     relief="flat", bd=0, cursor="hand2")
+    btn.pack()
 
     app_root.update_idletasks()
     w = app_root.winfo_width()
