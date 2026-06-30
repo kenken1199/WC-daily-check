@@ -12,11 +12,16 @@ from io import BytesIO
 import os
 import sys
 
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.drawing.image import Image
+from openpyxl.drawing.spreadsheet_drawing import TwoCellAnchor, AnchorMarker
+
 
 # =========================
 # ■ 定数
 # =========================
 MIN_OK_COUNT = 2    # 統計分析に必要な最小OKデータ数
+_RANK_LABEL_MAP = {"2": "OK", "1": "軽量", "E": "過量", "0": "２個乗り"}
 
 # --- 配色（親しみやすいGUI用） ---
 APP_BG       = "#FAF6F0"
@@ -242,11 +247,7 @@ def normalize_columns(file):
 
         rename_map = {}
         for col in cols:
-            if col == "測定値出力No.":
-                rename_map[col] = "測定値出力No."
-            elif col == "測定値(g)":
-                rename_map[col] = "測定値(g)"
-            elif "ランクコード" in col:
+            if "ランクコード" in col:
                 rename_map[col] = "ランクコード"
             elif "日付時刻" in col:
                 rename_map[col] = "日付時刻"
@@ -351,8 +352,6 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
                           upper_offset=None, lower_offset=None,
                           over_usl_count=None, under_lsl_count=None,
                           lot_display=None, product_display=None):
-    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-    from openpyxl.drawing.image import Image
 
     ws = wb.create_sheet("分析レポート", 0)
 
@@ -530,7 +529,6 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
         ws.row_dimensions[r].height = 13
 
     # ヒストグラム (D3:J25 に TwoCellAnchor で固定 ≈ 13.5cm × 10.5cm)
-    from openpyxl.drawing.spreadsheet_drawing import TwoCellAnchor, AnchorMarker
     img1 = Image(BytesIO(img_hist_bytes))
     img1.width  = 510  # fallback: 13.5cm
     img1.height = 397  # fallback: 10.5cm
@@ -588,6 +586,25 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
     ws.page_margins.footer = 0.3
 
 
+def _style_3col_data_sheet(ws, header_fill, header_font, center_align, border):
+    """測定値出力No./日付時刻/測定値(g) の3列データシートに共通スタイルを適用する"""
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 22
+    ws.column_dimensions["C"].width = 15
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = border
+    for row in ws.iter_rows(min_row=2, min_col=1, max_col=3):
+        for cell in row:
+            cell.border = border
+    for row in ws.iter_rows(min_row=2, min_col=2, max_col=2):
+        for cell in row:
+            cell.number_format = "yyyy-mm-dd hh:mm:ss"
+    ws.auto_filter.ref = f"A1:C{ws.max_row}"
+
+
 def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
                   outliers_df, img_hist, img_series, rank_counts, filename, lot,
                   total_count=0, original_ok_count=0, hinshoku_num=None, date_str=None,
@@ -598,9 +615,6 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
                   over_usl_count=None, under_lsl_count=None,
                   lot_display=None, product_display=None):
 
-    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-    from openpyxl.drawing.image import Image
-
     red_fill    = PatternFill(start_color="FFFF0000", fill_type="solid")
     header_fill = PatternFill(start_color="FF4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFFFF")
@@ -610,12 +624,10 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
         top=Side(style="thin"), bottom=Side(style="thin")
     )
 
-    rank_label_map = {"2": "OK", "1": "軽量", "E": "過量", "0": "２個乗り"}
-
     df_all_out = (df_all if df_all is not None else df_ok)[
         ["測定値出力No.", "日付時刻", "測定値(g)", "ランクコード"]
     ].copy()
-    df_all_out["ランクコード"] = df_all_out["ランクコード"].map(rank_label_map).fillna(df_all_out["ランクコード"])
+    df_all_out["ランクコード"] = df_all_out["ランクコード"].map(_RANK_LABEL_MAP).fillna(df_all_out["ランクコード"])
 
     with pd.ExcelWriter(filename, engine="openpyxl") as writer:
 
@@ -627,21 +639,7 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
 
         # ===== OKデータシート =====
         ws_ok = wb["全OKデータ"]
-        ws_ok.column_dimensions["A"].width = 18
-        ws_ok.column_dimensions["B"].width = 22
-        ws_ok.column_dimensions["C"].width = 15
-        for cell in ws_ok[1]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = center_align
-            cell.border = border
-        for row in ws_ok.iter_rows(min_row=2, min_col=1, max_col=3):
-            for cell in row:
-                cell.border = border
-        for row in ws_ok.iter_rows(min_row=2, min_col=2, max_col=2):
-            for cell in row:
-                cell.number_format = "yyyy-mm-dd hh:mm:ss"
-        ws_ok.auto_filter.ref = f"A1:C{ws_ok.max_row}"
+        _style_3col_data_sheet(ws_ok, header_fill, header_font, center_align, border)
         outlier_ids = set(outliers_df["測定値出力No."].values)
         for row in ws_ok.iter_rows(min_row=2, max_row=ws_ok.max_row):
             if row[0].value in outlier_ids:
@@ -650,21 +648,7 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
 
         # ===== 外れ値シート =====
         ws_out = wb["全外れ値（±3σ超）"]
-        ws_out.column_dimensions["A"].width = 18
-        ws_out.column_dimensions["B"].width = 22
-        ws_out.column_dimensions["C"].width = 15
-        for cell in ws_out[1]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = center_align
-            cell.border = border
-        for row in ws_out.iter_rows(min_row=2, min_col=1, max_col=3):
-            for cell in row:
-                cell.border = border
-        for row in ws_out.iter_rows(min_row=2, min_col=2, max_col=2):
-            for cell in row:
-                cell.number_format = "yyyy-mm-dd hh:mm:ss"
-        ws_out.auto_filter.ref = f"A1:C{ws_out.max_row}"
+        _style_3col_data_sheet(ws_out, header_fill, header_font, center_align, border)
 
         # ===== 全データシート =====
         ws_all = wb["全データ"]
@@ -743,11 +727,9 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         ("skip", ok_count) … OKデータ不足によりスキップ
     """
 
-    rank_map = {"2": "OK", "1": "軽量", "E": "過量", "0": "２個乗り"}
-
     rank_counts = group["ランクコード"].value_counts().reset_index()
     rank_counts.columns = ["ランクコード", "件数"]
-    rank_counts["内容"] = rank_counts["ランクコード"].map(rank_map)
+    rank_counts["内容"] = rank_counts["ランクコード"].map(_RANK_LABEL_MAP)
     rank_counts = rank_counts[["ランクコード", "内容", "件数"]]
 
     total_count = len(group)
@@ -756,9 +738,9 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     df_ok = group[group["ランクコード"] == "2"].copy()
 
     data = pd.to_numeric(df_ok["測定値(g)"], errors="coerce")
-    df_ok = df_ok.loc[data.notna()].copy()
-    data = data.loc[data.notna()]
-    data = np.asarray(data).ravel()
+    valid = data.notna()
+    df_ok = df_ok.loc[valid].copy()
+    data = np.asarray(data[valid])
 
     if len(data) < MIN_OK_COUNT:
         return ("skip", len(data))
