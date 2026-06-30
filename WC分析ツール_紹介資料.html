@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WC分析ツール 紹介資料</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "Meiryo", "Yu Gothic", "MS Gothic", sans-serif;
+    background: #f0f0f0;
+    color: #2c3e50;
+    font-size: 13px;
+  }
+
+  .page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 12px auto;
+    background: #fff;
+    padding: 16mm 16mm 14mm 16mm;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    page-break-after: always;
+  }
+
+  /* ===== 表紙 ===== */
+  .cover {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 265mm;
+    background: linear-gradient(160deg, #1F3864 0%, #2E5BAA 60%, #5B9BD5 100%);
+    border-radius: 4px;
+    color: white;
+    text-align: center;
+    padding: 40px;
+  }
+  .cover-label {
+    font-size: 13px;
+    letter-spacing: 4px;
+    opacity: 0.8;
+    margin-bottom: 18px;
+    border: 1px solid rgba(255,255,255,0.4);
+    padding: 4px 20px;
+    border-radius: 20px;
+  }
+  .cover-title {
+    font-size: 42px;
+    font-weight: bold;
+    letter-spacing: 6px;
+    margin-bottom: 12px;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  .cover-subtitle {
+    font-size: 16px;
+    opacity: 0.85;
+    margin-bottom: 60px;
+    letter-spacing: 2px;
+  }
+  .cover-divider {
+    width: 60px;
+    height: 3px;
+    background: rgba(255,255,255,0.5);
+    margin: 0 auto 60px;
+  }
+  .cover-tagline {
+    font-size: 20px;
+    font-weight: bold;
+    line-height: 1.8;
+    opacity: 0.95;
+  }
+  .cover-footer {
+    margin-top: auto;
+    padding-top: 60px;
+    opacity: 0.6;
+    font-size: 12px;
+  }
+
+  /* ===== セクション共通 ===== */
+  .section-header {
+    background: linear-gradient(90deg, #1F3864, #4472C4);
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 8px 16px;
+    border-radius: 3px;
+    margin-bottom: 16px;
+    letter-spacing: 1px;
+  }
+  .section-header span {
+    opacity: 0.6;
+    font-size: 12px;
+    font-weight: normal;
+    margin-left: 10px;
+    letter-spacing: 0;
+  }
+
+  /* ===== ツール紹介ページ ===== */
+  .intro-card {
+    background: #FAF6F0;
+    border-left: 5px solid #5B9BD5;
+    border-radius: 0 4px 4px 0;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    line-height: 1.85;
+  }
+  .intro-card p { margin-bottom: 6px; }
+  .intro-card p:last-child { margin-bottom: 0; }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .feature-box {
+    border: 1px solid #D9E1F2;
+    border-radius: 5px;
+    padding: 14px;
+    background: #EFF3FB;
+  }
+  .feature-box .icon {
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
+  .feature-box .ftitle {
+    font-weight: bold;
+    color: #1F3864;
+    font-size: 13px;
+    margin-bottom: 5px;
+  }
+  .feature-box .fdesc {
+    font-size: 12px;
+    color: #555;
+    line-height: 1.7;
+  }
+
+  /* ===== 使い方ページ ===== */
+  .step-list {
+    counter-reset: steps;
+    list-style: none;
+    margin-bottom: 20px;
+  }
+  .step-list li {
+    counter-increment: steps;
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 14px;
+    gap: 14px;
+  }
+  .step-list li::before {
+    content: counter(steps);
+    min-width: 34px;
+    height: 34px;
+    background: #5B9BD5;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 16px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-body .step-title {
+    font-weight: bold;
+    font-size: 14px;
+    color: #1F3864;
+    margin-bottom: 4px;
+  }
+  .step-body .step-desc {
+    font-size: 12px;
+    color: #555;
+    line-height: 1.7;
+  }
+
+  .note-box {
+    background: #FFFDE7;
+    border: 1px solid #F9CA24;
+    border-radius: 4px;
+    padding: 12px 16px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: #555;
+  }
+  .note-box strong { color: #7F6000; }
+
+  /* ===== 事例ページ ===== */
+  .case-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .case-num {
+    background: #1F3864;
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .case-title-block .product { font-size: 18px; font-weight: bold; color: #1F3864; }
+  .case-title-block .date { font-size: 12px; color: #7D8A93; margin-top: 2px; }
+
+  .case-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  .stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .stats-table th {
+    background: #4472C4;
+    color: white;
+    padding: 6px 10px;
+    text-align: left;
+    font-weight: bold;
+  }
+  .stats-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid #E0E0E0;
+  }
+  .stats-table tr:nth-child(even) td { background: #EFF3FB; }
+  .stats-table .val { text-align: right; font-weight: bold; }
+  .stats-table .warn td { background: #FFF2CC; color: #7F6000; font-weight: bold; }
+  .stats-table .ng td { background: #FFE4E1; color: #9C0006; font-weight: bold; }
+
+  .rank-block { }
+  .rank-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 10px;
+    border-radius: 3px;
+    margin-bottom: 4px;
+    font-size: 12px;
+  }
+  .rank-ok { background: #EFF3FB; }
+  .rank-ng { background: #FFE4E1; color: #9C0006; font-weight: bold; }
+  .rank-warn { background: #FFF2CC; color: #7F6000; font-weight: bold; }
+
+  .finding-box {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+  }
+  .finding-card {
+    border-radius: 5px;
+    padding: 12px 14px;
+    text-align: center;
+  }
+  .finding-card.detection { background: #FFF2CC; border: 1px solid #F9CA24; }
+  .finding-card.cause { background: #FFE4E1; border: 1px solid #FF7675; }
+  .finding-card.result { background: #D4EDDA; border: 1px solid #28A745; }
+  .finding-card .fc-label {
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    opacity: 0.75;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+  }
+  .finding-card .fc-value {
+    font-size: 13px;
+    font-weight: bold;
+    line-height: 1.5;
+  }
+  .finding-card.result .fc-value { color: #155724; font-size: 12px; }
+
+  .case-divider { border: none; border-top: 2px solid #E8E2D8; margin: 20px 0; }
+
+  @media print {
+    body { background: white; }
+    .page {
+      margin: 0;
+      box-shadow: none;
+      border-radius: 0;
+      padding: 14mm 16mm;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== 表紙 ===== -->
+<div class="page">
+  <div class="cover">
+    <div class="cover-label">社内資料</div>
+    <div class="cover-title">WC分析ツール</div>
+    <div class="cover-subtitle">重量チェッカーデータ分析システム　紹介資料</div>
+    <div class="cover-divider"></div>
+    <div class="cover-tagline">
+      重量データから不良品を早期発見し、<br>
+      市場流出ゼロを目指す。
+    </div>
+    <div class="cover-footer">2026年6月</div>
+  </div>
+</div>
+
+<!-- ===== ツール紹介ページ ===== -->
+<div class="page">
+  <div class="section-header">WC分析ツールとは</div>
+
+  <div class="intro-card">
+    <p>重量チェッカー（WC）で測定した検査データ（CSVファイル）を読み込み、<strong>不良品の自動検出・統計グラフ・エクセルレポートの作成</strong>をワンクリックで行うツールです。</p>
+    <p>これまで目視では気づきにくかった「OK判定の中に紛れ込んだ異常な重量品」も、統計的なばらつき分析によって可視化し、市場への不良品流出を防ぎます。</p>
+  </div>
+
+  <div class="feature-grid">
+    <div class="feature-box">
+      <div class="icon">📂</div>
+      <div class="ftitle">CSVファイルを読み込むだけ</div>
+      <div class="fdesc">重量チェッカーから出力されたCSVを選択するだけで、自動で分析を開始します。複数ファイルの一括読み込みにも対応。</div>
+    </div>
+    <div class="feature-box">
+      <div class="icon">📊</div>
+      <div class="ftitle">3種類のグラフを自動作成</div>
+      <div class="fdesc">分布ヒストグラム・OK品時系列チャート・全データ時系列チャートを自動生成。不良発生のタイミングが一目でわかります。</div>
+    </div>
+    <div class="feature-box">
+      <div class="icon">🔍</div>
+      <div class="ftitle">統計的外れ値を自動検出</div>
+      <div class="fdesc">OK判定された品の中から、統計的に異常な重量（±3σ超）を自動で抽出。WCで弾かれなかった異常品も見逃しません。</div>
+    </div>
+    <div class="feature-box">
+      <div class="icon">📝</div>
+      <div class="ftitle">エクセルレポートを自動作成</div>
+      <div class="fdesc">分析結果・グラフ・生データをまとめたエクセルファイルをデスクトップに自動保存。記録・報告書として即座に活用できます。</div>
+    </div>
+  </div>
+
+  <div class="section-header" style="margin-top:8px;">ランクコードの意味</div>
+  <table class="stats-table" style="margin-bottom:0;">
+    <tr><th style="width:18%">コード</th><th style="width:18%">表示名</th><th>内容</th></tr>
+    <tr><td class="val">OK</td><td>正量</td><td>規定重量範囲内の合格品</td></tr>
+    <tr><td class="val" style="color:#9C0006;">軽量</td><td>軽量</td><td>規定より軽い不合格品。内容物の抜け・欠品が疑われる</td></tr>
+    <tr><td class="val" style="color:#9C0006;">過量</td><td>過量</td><td>規定より重い不合格品。内容物の過剰投入・異物が疑われる</td></tr>
+    <tr><td class="val" style="color:#7F6000;">２個乗り</td><td>２個乗り</td><td>2個が重なって計量されたと判定されたもの（参考値）</td></tr>
+  </table>
+</div>
+
+<!-- ===== 使い方ページ ===== -->
+<div class="page">
+  <div class="section-header">使い方</div>
+
+  <ol class="step-list">
+    <li>
+      <div class="step-body">
+        <div class="step-title">WC分析ツール.exe を起動する</div>
+        <div class="step-desc">デスクトップ（または指定フォルダ）にある「WC分析ツール.exe」をダブルクリックして起動します。</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <div class="step-title">「CSV選択して解析」ボタンをクリックする</div>
+        <div class="step-desc">ボタンを押すと、ファイル選択画面が開きます。重量チェッカーから出力したCSVファイルを選択してください。複数ファイルをまとめて選ぶことも、フォルダごと選ぶことも可能です。</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <div class="step-title">ロット分割を確認する</div>
+        <div class="step-desc">データの時間的な切れ目を自動で検出し、ロットの区切りを提案します。区切り時間（10分・15分・30分・45分・1時間）をボタンで選んで確認し、「この分割でOK」を押します。分割が不要な場合は「ロット分割しない」を選びます。</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <div class="step-title">自動で分析・エクセル作成が完了する</div>
+        <div class="step-desc">ロット分割を確定すると、自動で統計計算・グラフ作成・エクセル出力が行われます。完了メッセージが表示されたら、デスクトップにエクセルファイルが保存されています。</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-body">
+        <div class="step-title">エクセルを開いて確認する</div>
+        <div class="step-desc">「分析レポート」シートに全体の統計が、グラフシートには視覚的なチャートが含まれます。特に全データ時系列グラフで、OK判定品の中に浮かび上がる異常な重量品がないか確認してください。</div>
+      </div>
+    </li>
+  </ol>
+
+  <div class="note-box">
+    <strong>【ポイント】OK判定でも異常品が混在することがある</strong><br>
+    重量チェッカーは規定の重量範囲で合否を判定しますが、範囲内であっても平均から大きくはずれた品は「外れ値」として本ツールが自動で抽出します。<br>
+    時系列チャートの <strong>×印（赤）</strong> が外れ値です。同じ時間帯に集中している場合は、その時刻に何らかの異常が発生した可能性があります。
+  </div>
+</div>
+
+<!-- ===== 検出事例ページ 1〜2 ===== -->
+<div class="page">
+  <div class="section-header">不良品検出事例 <span>WC分析ツールによって未然に防いだ市場流出</span></div>
+
+  <!-- 事例1 -->
+  <div class="case-header">
+    <div class="case-num">事例<br>1</div>
+    <div class="case-title-block">
+      <div class="product">コンタック36錠</div>
+      <div class="date">製造日：2025年12月22〜23日　／　品種番号11　ロット1</div>
+    </div>
+  </div>
+
+  <div class="case-body">
+    <div>
+      <table class="stats-table">
+        <tr><th colspan="2">基本統計</th></tr>
+        <tr><td>全数</td><td class="val">19,715 個</td></tr>
+        <tr><td>OK数</td><td class="val">19,682 個</td></tr>
+        <tr class="ng"><td>NG数</td><td class="val">33 個</td></tr>
+        <tr class="warn"><td>不良率</td><td class="val">0.17 %</td></tr>
+        <tr><td>製造時間</td><td class="val">28時間30分</td></tr>
+        <tr><td>平均重量</td><td class="val">34.599 g</td></tr>
+        <tr><td>標準偏差</td><td class="val">0.202 g</td></tr>
+        <tr class="warn"><td>外れ値件数</td><td class="val">41 件</td></tr>
+      </table>
+    </div>
+    <div class="rank-block">
+      <div style="font-weight:bold; color:#1F3864; font-size:12px; margin-bottom:6px;">ランクコード集計</div>
+      <div class="rank-row rank-ok"><span>OK（正量）</span><span>19,682件　99.83%</span></div>
+      <div class="rank-row rank-warn"><span>２個乗り</span><span>21件　0.11%</span></div>
+      <div class="rank-row rank-ng"><span>過量</span><span>7件　0.04%</span></div>
+      <div class="rank-row rank-ng"><span>軽量</span><span>5件　0.03%</span></div>
+      <div style="margin-top:12px; font-size:12px; color:#555; line-height:1.7; background:#FAF6F0; padding:10px; border-radius:4px;">
+        全データ時系列グラフで、OK品（平均約34.6g）の中に<strong>10〜20g台という極端に軽い点</strong>が複数散見された。WCはOK判定していたが、本ツールで重量の乖離を検出。
+      </div>
+    </div>
+  </div>
+
+  <div class="finding-box" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:0;">
+    <div class="finding-card detection">
+      <div class="fc-label">検出内容</div>
+      <div class="fc-value">OK品の中に<br>極端に軽い個体を検出</div>
+    </div>
+    <div class="finding-card cause">
+      <div class="fc-label">判明した異常</div>
+      <div class="fc-value">PTPシート<br>1枚抜け</div>
+    </div>
+    <div class="finding-card result">
+      <div class="fc-label">防いだ結果</div>
+      <div class="fc-value">不良品の市場流出を防止<br>速やかに工程対応</div>
+    </div>
+  </div>
+
+  <hr class="case-divider">
+
+  <!-- 事例2 -->
+  <div class="case-header">
+    <div class="case-num">事例<br>2</div>
+    <div class="case-title-block">
+      <div class="product">防風通聖散料 360錠</div>
+      <div class="date">製造日：2026年3月30日　／　品種番号20　ロット1</div>
+    </div>
+  </div>
+
+  <div class="case-body">
+    <div>
+      <table class="stats-table">
+        <tr><th colspan="2">基本統計</th></tr>
+        <tr><td>全数</td><td class="val">2,172 個</td></tr>
+        <tr><td>OK数</td><td class="val">2,160 個</td></tr>
+        <tr class="ng"><td>NG数</td><td class="val">12 個</td></tr>
+        <tr class="warn"><td>不良率</td><td class="val">0.55 %</td></tr>
+        <tr><td>製造時間</td><td class="val">2時間10分</td></tr>
+        <tr><td>平均重量</td><td class="val">383.023 g</td></tr>
+        <tr><td>標準偏差</td><td class="val">0.510 g</td></tr>
+        <tr class="warn"><td>外れ値件数</td><td class="val">6 件</td></tr>
+      </table>
+    </div>
+    <div class="rank-block">
+      <div style="font-weight:bold; color:#1F3864; font-size:12px; margin-bottom:6px;">ランクコード集計</div>
+      <div class="rank-row rank-ok"><span>OK（正量）</span><span>2,160件　99.45%</span></div>
+      <div class="rank-row rank-warn"><span>２個乗り</span><span>10件　0.46%</span></div>
+      <div class="rank-row rank-ng"><span>軽量</span><span>2件　0.09%</span></div>
+      <div style="margin-top:12px; font-size:12px; color:#555; line-height:1.7; background:#FAF6F0; padding:10px; border-radius:4px;">
+        全データ時系列で、383g付近に集中するOK品の中に<strong>ほぼ0g近くの測定値</strong>が製造開始直後に2点検出された。添付文書の入れ忘れによる重量差をグラフ上で明確に可視化。
+      </div>
+    </div>
+  </div>
+
+  <div class="finding-box" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+    <div class="finding-card detection">
+      <div class="fc-label">検出内容</div>
+      <div class="fc-value">OK品の中に<br>極端に軽い個体を検出</div>
+    </div>
+    <div class="finding-card cause">
+      <div class="fc-label">判明した異常</div>
+      <div class="fc-value">添付文書<br>1枚抜け</div>
+    </div>
+    <div class="finding-card result">
+      <div class="fc-label">防いだ結果</div>
+      <div class="fc-value">不良品の市場流出を防止<br>工程の早期対応を実施</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 検出事例ページ 3〜4 ===== -->
+<div class="page">
+
+  <!-- 事例3 -->
+  <div class="case-header">
+    <div class="case-num">事例<br>3</div>
+    <div class="case-title-block">
+      <div class="product">第一三共胃腸薬プラス細粒 12包</div>
+      <div class="date">製造日：2026年6月22日　／　品種番号1　ロット1</div>
+    </div>
+  </div>
+
+  <div class="case-body">
+    <div>
+      <table class="stats-table">
+        <tr><th colspan="2">基本統計</th></tr>
+        <tr><td>全数</td><td class="val">22,827 個</td></tr>
+        <tr><td>OK数</td><td class="val">22,804 個</td></tr>
+        <tr class="ng"><td>NG数</td><td class="val">23 個</td></tr>
+        <tr class="warn"><td>不良率</td><td class="val">0.10 %</td></tr>
+        <tr><td>製造時間</td><td class="val">28時間56分</td></tr>
+        <tr><td>平均重量</td><td class="val">36.976 g</td></tr>
+        <tr><td>標準偏差</td><td class="val">0.153 g</td></tr>
+        <tr class="warn"><td>外れ値件数</td><td class="val">124 件</td></tr>
+      </table>
+    </div>
+    <div class="rank-block">
+      <div style="font-weight:bold; color:#1F3864; font-size:12px; margin-bottom:6px;">ランクコード集計</div>
+      <div class="rank-row rank-ok"><span>OK（正量）</span><span>22,804件　99.90%</span></div>
+      <div class="rank-row rank-ng"><span>軽量</span><span>16件　0.07%</span></div>
+      <div class="rank-row rank-ng"><span>過量</span><span>5件　0.02%</span></div>
+      <div class="rank-row rank-warn"><span>２個乗り</span><span>2件　0.01%</span></div>
+      <div style="margin-top:12px; font-size:12px; color:#555; line-height:1.7; background:#FAF6F0; padding:10px; border-radius:4px;">
+        全データ時系列で、OK品（約37g）の中に<strong>約40gという突出した重量の点</strong>が散発的に検出された。細粒1包が余分に挿入されていたことによる重量増加を可視化。
+      </div>
+    </div>
+  </div>
+
+  <div class="finding-box" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-bottom:0;">
+    <div class="finding-card detection">
+      <div class="fc-label">検出内容</div>
+      <div class="fc-value">OK品の中に<br>極端に重い個体を検出</div>
+    </div>
+    <div class="finding-card cause">
+      <div class="fc-label">判明した異常</div>
+      <div class="fc-value">細粒が<br>1包多く挿入</div>
+    </div>
+    <div class="finding-card result">
+      <div class="fc-label">防いだ結果</div>
+      <div class="fc-value">不良品の市場流出を防止<br>充填工程を即時確認</div>
+    </div>
+  </div>
+
+  <hr class="case-divider">
+
+  <!-- 事例4 -->
+  <div class="case-header">
+    <div class="case-num">事例<br>4</div>
+    <div class="case-title-block">
+      <div class="product">ルプセ</div>
+      <div class="date">製造日：2026年3月27日　／　品種番号7　ロット1</div>
+    </div>
+  </div>
+
+  <div class="case-body">
+    <div>
+      <table class="stats-table">
+        <tr><th colspan="2">基本統計</th></tr>
+        <tr><td>全数</td><td class="val">3,641 個</td></tr>
+        <tr><td>OK数</td><td class="val">3,638 個</td></tr>
+        <tr class="ng"><td>NG数</td><td class="val">3 個</td></tr>
+        <tr><td>不良率</td><td class="val">0.08 %</td></tr>
+        <tr><td>製造時間</td><td class="val">7時間27分</td></tr>
+        <tr><td>平均重量</td><td class="val">116.746 g</td></tr>
+        <tr><td>標準偏差</td><td class="val">0.230 g</td></tr>
+        <tr class="ng"><td>外れ値件数</td><td class="val">98 件</td></tr>
+      </table>
+    </div>
+    <div class="rank-block">
+      <div style="font-weight:bold; color:#1F3864; font-size:12px; margin-bottom:6px;">ランクコード集計</div>
+      <div class="rank-row rank-ok"><span>OK（正量）</span><span>3,638件　99.92%</span></div>
+      <div class="rank-row rank-warn"><span>２個乗り</span><span>2件　0.05%</span></div>
+      <div class="rank-row rank-ng"><span>軽量</span><span>1件　0.03%</span></div>
+      <div style="margin-top:12px; font-size:12px; color:#555; line-height:1.7; background:#FAF6F0; padding:10px; border-radius:4px;">
+        NG数はわずか3件だったが、OK判定品の中に<strong>外れ値が98件</strong>検出された。時系列チャートで×印（外れ値）が特定の時間帯に集中しており、添付文書が2枚入っていたことが判明。PQロットのため市場流出はなかったが、問題を記録として残せた。
+      </div>
+    </div>
+  </div>
+
+  <div class="finding-box" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+    <div class="finding-card detection">
+      <div class="fc-label">検出内容</div>
+      <div class="fc-value">OK品の中から<br>外れ値が98件を検出</div>
+    </div>
+    <div class="finding-card cause">
+      <div class="fc-label">判明した異常</div>
+      <div class="fc-value">添付文書が<br>2枚入り</div>
+    </div>
+    <div class="finding-card result" style="background:#EFF3FB; border-color:#4472C4;">
+      <div class="fc-label" style="color:#1F3864;">結果</div>
+      <div class="fc-value" style="color:#1F3864;">PQロットのため<br>市場流出なし<br><span style="font-size:11px; font-weight:normal;">異常の記録・工程改善に活用</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== まとめページ ===== -->
+<div class="page">
+  <div class="section-header">まとめ</div>
+
+  <table class="stats-table" style="margin-bottom:20px;">
+    <tr>
+      <th style="width:6%">事例</th>
+      <th style="width:22%">品種</th>
+      <th style="width:14%">製造日</th>
+      <th style="width:20%">検出内容</th>
+      <th style="width:20%">判明した異常</th>
+      <th style="width:18%">結果</th>
+    </tr>
+    <tr>
+      <td class="val">1</td>
+      <td>コンタック36錠</td>
+      <td>2025/12/22</td>
+      <td>OK品の中の極端な軽量品</td>
+      <td>PTPシート1枚抜け</td>
+      <td style="color:#155724; font-weight:bold;">市場流出防止</td>
+    </tr>
+    <tr>
+      <td class="val">2</td>
+      <td>防風通聖散料360錠</td>
+      <td>2026/3/30</td>
+      <td>OK品の中の極端な軽量品</td>
+      <td>添付文書1枚抜け</td>
+      <td style="color:#155724; font-weight:bold;">市場流出防止</td>
+    </tr>
+    <tr>
+      <td class="val">3</td>
+      <td>第一三共胃腸薬プラス細粒12包</td>
+      <td>2026/6/22</td>
+      <td>OK品の中の極端な重量品</td>
+      <td>細粒1包多く挿入</td>
+      <td style="color:#155724; font-weight:bold;">市場流出防止</td>
+    </tr>
+    <tr>
+      <td class="val">4</td>
+      <td>ルプセ</td>
+      <td>2026/3/27</td>
+      <td>OK品中の外れ値98件</td>
+      <td>添付文書2枚入り</td>
+      <td style="color:#1F3864; font-weight:bold;">PQ品、記録に活用</td>
+    </tr>
+  </table>
+
+  <div style="background:linear-gradient(135deg,#1F3864,#4472C4); border-radius:6px; padding:24px 28px; color:white; text-align:center; margin-bottom:20px;">
+    <div style="font-size:14px; opacity:0.8; margin-bottom:10px;">これまでの実績</div>
+    <div style="font-size:28px; font-weight:bold; letter-spacing:2px; margin-bottom:6px;">4件の不良品流出を防止</div>
+    <div style="font-size:13px; opacity:0.85;">いずれも重量チェッカーのOK判定をすり抜けていた異常品</div>
+  </div>
+
+  <div class="intro-card">
+    <p><strong>WC分析ツールは、重量チェッカーの判定だけでは気づけなかった異常を、統計的なアプローチで可視化します。</strong></p>
+    <p>製造ロットごとに全数データを確認することで、発生した異常の「時間帯・傾向・件数」を把握し、工程の早期改善につなげることができます。</p>
+    <p>日々の製造データを分析習慣に取り入れることで、品質のさらなる安定と、市場流出ゼロの継続を目指しましょう。</p>
+  </div>
+</div>
+
+</body>
+</html>

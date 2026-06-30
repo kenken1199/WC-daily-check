@@ -949,9 +949,9 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     y_hi = max(mean + 10 * std, usl + std * 3) if usl is not None else mean + 10 * std
     data_min = y_vals_all.min()
     data_max = y_vals_all.max()
-    margin3 = std * 0.5
-    y_lo = min(y_lo, data_min - margin3)
-    y_hi = max(y_hi, data_max + margin3)
+    pad = max((data_max - data_min) * 0.12, std * 2)
+    y_lo = min(y_lo, data_min - pad)
+    y_hi = max(y_hi, data_max + pad)
     ax3.set_ylim(y_lo, y_hi)
 
     ax3.set_title(f"{chart_prefix}{lot_display}　全データ時系列（n={len(group_sorted)}）", fontsize=14, fontweight="bold")
