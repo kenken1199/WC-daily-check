@@ -117,7 +117,6 @@ class LotPreviewDialog(tk.Toplevel):
         frame_btn.pack(fill="x")
         ttk.Button(frame_btn, text="この分割でOK", command=self._on_ok).pack(side="left", padx=5)
         ttk.Button(frame_btn, text="ロット分割しない", command=self._on_no_split).pack(side="left", padx=5)
-        ttk.Button(frame_btn, text="手動分割する", command=self._on_manual).pack(side="left", padx=5)
         ttk.Button(frame_btn, text="キャンセル", command=self._on_cancel).pack(side="right", padx=5)
 
         self._update_preview()
@@ -213,10 +212,6 @@ class LotPreviewDialog(tk.Toplevel):
         self.result = ("ok", df)
         self.destroy()
 
-    def _on_manual(self):
-        self.result = ("manual", None)
-        self.destroy()
-
     def _on_cancel(self):
         self.result = ("cancel", None)
         self.destroy()
@@ -237,11 +232,12 @@ class SpecInputDialog(tk.Toplevel):
         super().__init__(parent)
         lot_label = f"ロット{lot}" if lot is not None else ""
         self.title(f"規格値入力　{lot_label}".strip())
-        self.result = "skip"
+        self.result = "cancel"
         self.lot_label = None
         self.product_name = None
         self.resizable(False, False)
         self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         frame = ttk.Frame(self, padding=18)
         frame.pack(fill="both", expand=True)
@@ -361,6 +357,10 @@ class SpecInputDialog(tk.Toplevel):
 
     def _on_skip(self):
         self.result = "skip"
+        self.destroy()
+
+    def _on_cancel(self):
+        self.result = "cancel"
         self.destroy()
 
 
@@ -1187,9 +1187,6 @@ def process_files(files):
 
         if dialog.result is None or dialog.result[0] == "cancel":
             return
-        if dialog.result[0] == "manual":
-            messagebox.showwarning("中止", "CSVを手動分割してください")
-            return
 
         df = dialog.result[1]
         ma_window = getattr(dialog, "ma_window", MA_WINDOW)
@@ -1205,6 +1202,8 @@ def process_files(files):
             spec_dialog = SpecInputDialog(app_root, hinshoku_num,
                                           lot=lot, ok_count=ok_count_lot)
             app_root.wait_window(spec_dialog)
+            if spec_dialog.result == "cancel":
+                return
             if spec_dialog.result == "skip":
                 spec_per_lot[lot] = (None, None, None)
             else:
