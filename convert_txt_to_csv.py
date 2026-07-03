@@ -21,7 +21,9 @@ txt の各行は「No. 左の値 右の値」の形式（右の値は無い行�
 """
 
 import sys
+import re
 import csv
+import datetime
 from pathlib import Path
 
 # txt の文字コード（Windows 日本語環境の Shift-JIS）
@@ -31,11 +33,15 @@ OUTPUT_ENCODING = "utf-8-sig"
 
 HEADER = ["測定値出力No.", "測定値(g)", "判定"]
 
+_MONTH_ABBR = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}
+_DATE_RE = re.compile(r"(\d{4})-([A-Za-z]{3})-(\d{2})\s+(\d{2}):(\d{2})")
 
-def convert(input_path: Path, output_path: Path) -> int:
-    """1 ファイルを変換し、出力した行数（ヘッダーを除く）を返す。"""
-    text = input_path.read_text(encoding=INPUT_ENCODING, errors="replace")
 
+def parse_rows(text: str) -> list:
+    """txt本文から [測定値出力No., 測定値, 判定(OK/NG)] の行リストを作る。"""
     rows = []
     for line in text.splitlines():
         parts = line.split()
@@ -54,6 +60,32 @@ def convert(input_path: Path, output_path: Path) -> int:
             judgment = "NG" if "*" in token else "OK"
             value = token.replace("*", "")
             rows.append([no + offset, value, judgment])
+
+    return rows
+
+
+def parse_datetime(text: str):
+    """txt先頭付近の "2026-Jul-02  10:30" 形式の日付時刻を取り出す（無ければ None）。
+
+    月名の略称（Jul等）は環境のロケールに依存させず自前で解決する。
+    """
+    m = _DATE_RE.search(text)
+    if not m:
+        return None
+    year, mon_abbr, day, hour, minute = m.groups()
+    month = _MONTH_ABBR.get(mon_abbr)
+    if month is None:
+        return None
+    try:
+        return datetime.datetime(int(year), month, int(day), int(hour), int(minute))
+    except ValueError:
+        return None
+
+
+def convert(input_path: Path, output_path: Path) -> int:
+    """1 ファイルを変換し、出力した行数（ヘッダーを除く）を返す。"""
+    text = input_path.read_text(encoding=INPUT_ENCODING, errors="replace")
+    rows = parse_rows(text)
 
     with output_path.open("w", encoding=OUTPUT_ENCODING, newline="") as f:
         writer = csv.writer(f)

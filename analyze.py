@@ -11,17 +11,20 @@ import datetime
 from io import BytesIO
 import os
 import sys
+from pathlib import Path
 
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.drawing.image import Image
 from openpyxl.drawing.spreadsheet_drawing import TwoCellAnchor, AnchorMarker
+
+import convert_txt_to_csv as txt_convert
 
 
 # =========================
 # ■ 定数
 # =========================
 MIN_OK_COUNT = 2    # 統計分析に必要な最小OKデータ数
-_RANK_LABEL_MAP = {"2": "OK", "1": "軽量", "E": "過量", "0": "２個乗り"}
+_RANK_LABEL_MAP = {"2": "OK", "1": "軽量", "E": "過量", "0": "２個乗り", "N": "NG"}
 
 # --- 配色（親しみやすいGUI用） ---
 APP_BG       = "#FAF6F0"
@@ -312,6 +315,31 @@ def normalize_columns(file):
     df_ishida["メーカー"] = "イシダ"
 
     return df_ishida[["測定値出力No.", "日付時刻", "測定値(g)", "ランクコード", "メーカー"]], hinshoku_num
+
+
+def normalize_txt(file):
+    """WC計量機のtxt出力を読み込む。
+
+    txtには測定1件ごとの時刻・品種番号が無く、OK/NGの判定のみが分かる
+    （軽量・過量の区別は不可）ため、ランクコードは OK="2" / NG="N" とする。
+    戻り値: (df, ファイル先頭の日付時刻 or None)
+    """
+    path = Path(file)
+    text = path.read_text(encoding=txt_convert.INPUT_ENCODING, errors="replace")
+    rows = txt_convert.parse_rows(text)
+    if not rows:
+        raise ValueError(f"txtファイルにデータが見つかりませんでした: {path.name}")
+
+    dt = txt_convert.parse_datetime(text)
+
+    df = pd.DataFrame(rows, columns=["測定値出力No.", "測定値(g)", "判定"])
+    df["測定値出力No."] = range(1, len(df) + 1)
+    df["測定値(g)"] = pd.to_numeric(df["測定値(g)"], errors="coerce")
+    df["ランクコード"] = df["判定"].map({"OK": "2", "NG": "N"})
+    df["日付時刻"] = pd.NaT
+    df["メーカー"] = "WC"
+
+    return df[["測定値出力No.", "日付時刻", "測定値(g)", "ランクコード", "メーカー"]], dt
 
 
 # =========================
@@ -661,7 +689,7 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
             cell.font = header_font
             cell.alignment = center_align
             cell.border = border
-        ng_labels = {"軽量", "過量"}
+        ng_labels = {"軽量", "過量", "NG"}
         for row in ws_all.iter_rows(min_row=2, max_row=ws_all.max_row):
             is_ng = row[3].value in ng_labels  # D列 = ランクコード
             for cell in row:
@@ -729,7 +757,7 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
 
     rank_counts = group["ランクコード"].value_counts().reset_index()
     rank_counts.columns = ["ランクコード", "件数"]
-    rank_counts["内容"] = rank_counts["ランクコード"].map(_RANK_LABEL_MAP)
+    rank_counts["内容"] = rank_counts["ランクコード"].map(_RANK_LABEL_MAP).fillna(rank_counts["ランクコード"])
     rank_counts = rank_counts[["ランクコード", "内容", "件数"]]
 
     total_count = len(group)
@@ -885,11 +913,13 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     ok_mask    = group_sorted["ランクコード"] == "2"
     kacho_mask = group_sorted["ランクコード"] == "E"
     keiry_mask = group_sorted["ランクコード"] == "1"
+    ng_mask    = group_sorted["ランクコード"] == "N"  # 軽量/過量の区別が無いtxt由来データ用
 
     y_vals_all  = pd.to_numeric(group_sorted["測定値(g)"], errors="coerce")
     y_ok_all    = y_vals_all[ok_mask].values
     y_kacho_all = y_vals_all[kacho_mask].values
     y_keiry_all = y_vals_all[keiry_mask].values
+    y_ng_all    = y_vals_all[ng_mask].values
 
     fig3, ax3 = plt.subplots(figsize=(12, 5))
 
@@ -897,6 +927,7 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         x_ok_all    = group_sorted.loc[ok_mask,    "日付時刻"]
         x_kacho_all = group_sorted.loc[kacho_mask, "日付時刻"]
         x_keiry_all = group_sorted.loc[keiry_mask, "日付時刻"]
+        x_ng_all    = group_sorted.loc[ng_mask,    "日付時刻"]
         ax3.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
         ax3.xaxis.set_major_locator(mdates.AutoDateLocator())
         plt.setp(ax3.xaxis.get_majorticklabels(), rotation=30, ha="right")
@@ -906,6 +937,7 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
         x_ok_all     = x_base[ok_mask.values]
         x_kacho_all  = x_base[kacho_mask.values]
         x_keiry_all  = x_base[keiry_mask.values]
+        x_ng_all     = x_base[ng_mask.values]
         ax3.set_xlabel("測定順序", fontsize=12)
 
     ax3.plot(x_ok_all, y_ok_all, color="steelblue", linewidth=0.6, alpha=0.4, zorder=1)
@@ -917,6 +949,9 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     if keiry_mask.any():
         ax3.scatter(x_keiry_all, y_keiry_all, color="orange", s=60, marker="v", zorder=4,
                     label=f"軽量 ({keiry_mask.sum()}件)")
+    if ng_mask.any():
+        ax3.scatter(x_ng_all, y_ng_all, color="red", s=50, marker="x", linewidths=2, zorder=4,
+                    label=f"NG ({ng_mask.sum()}件)")
 
     ax3.axhline(mean,  color="red",    linewidth=1.5, linestyle="-",  label=f"平均（OK品）: {mean:.3f}")
     if spec_nominal is not None:
@@ -982,12 +1017,60 @@ def _expand_folders(paths):
         if os.path.isdir(p):
             csvs = sorted(
                 os.path.join(p, name) for name in os.listdir(p)
-                if name.lower().endswith(".csv")
+                if name.lower().endswith((".csv", ".txt"))
             )
             expanded.extend(csvs)
         else:
             expanded.append(p)
     return expanded
+
+
+def process_txt_files(files, save_dir):
+    """WC計量機のtxtファイルを読み込み、1ファイル＝1ロットとしてExcelを作成する。
+
+    txtには測定値出力No.・測定値(g)・判定(OK/NG)しか無く、品種番号や
+    測定1件ごとの時刻・軽量/過量の区別が無いため、CSV由来のロット分割
+    ダイアログは使わず、ファイルごとに直接 process_lot を呼び出す。
+    """
+    created_lots = []   # [(label, ok_count), ...]
+    skipped_lots = []   # [(label, ok_count, total_count), ...]
+    failed_files = []   # [(name, error), ...]
+
+    for f in files:
+        try:
+            df, dt = normalize_txt(f)
+        except Exception as e:
+            failed_files.append((os.path.basename(f), str(e)))
+            continue
+
+        lot_label = f"{dt.strftime('%Y-%m-%d %H:%M')} 測定" if dt is not None else Path(f).stem
+        total = len(df)
+        status, ok_count = process_lot(df, 1, save_dir, hinshoku_num=None, spec=None,
+                                       lot_label=lot_label, product_name=None)
+        if status == "ok":
+            created_lots.append((lot_label, ok_count))
+        else:
+            skipped_lots.append((lot_label, ok_count, total))
+
+    msg_parts = []
+    if created_lots:
+        msg_parts.append(f"Excel作成完了\n作成: {len(created_lots)}ファイル（デスクトップに保存しました）")
+    if skipped_lots:
+        s = "⚠ 以下はOKデータ不足のためスキップしました:\n"
+        s += "\n".join(f"  ・{label}: 総{total}件 / OK{ok}件" for label, ok, total in skipped_lots)
+        s += f"\n（OKデータが {MIN_OK_COUNT} 件未満は統計計算ができません）"
+        msg_parts.append(s)
+    if failed_files:
+        s = "⚠ 以下は読み込みに失敗しました:\n"
+        s += "\n".join(f"  ・{name}: {err}" for name, err in failed_files)
+        msg_parts.append(s)
+
+    if not created_lots:
+        messagebox.showerror("作成失敗", "\n\n".join(msg_parts) if msg_parts else "処理できるファイルがありませんでした。")
+    elif skipped_lots or failed_files:
+        messagebox.showwarning("完了（一部スキップ/失敗）", "\n\n".join(msg_parts))
+    else:
+        messagebox.showinfo("完了", "\n\n".join(msg_parts))
 
 
 def process_files(files):
@@ -997,7 +1080,7 @@ def process_files(files):
 
         files = _expand_folders(files)
         if not files:
-            messagebox.showerror("エラー", "選択したフォルダにCSVファイルが見つかりません。")
+            messagebox.showerror("エラー", "選択したフォルダにCSV/txtファイルが見つかりません。")
             return
 
         for f in files:
@@ -1005,7 +1088,22 @@ def process_files(files):
                 messagebox.showerror("エラー", f"ファイルが見つかりません: {os.path.basename(f)}")
                 return
 
+        other_files = [f for f in files if not f.lower().endswith((".csv", ".txt"))]
+        if other_files:
+            messagebox.showerror("エラー", "CSVまたはtxtファイルのみ選択してください。")
+            return
+
+        txt_files = [f for f in files if f.lower().endswith(".txt")]
+        csv_files = [f for f in files if f.lower().endswith(".csv")]
+        if txt_files and csv_files:
+            messagebox.showerror("エラー", "CSVファイルとtxtファイルは同時に選択できません。分けて実行してください。")
+            return
+
         save_dir = os.path.join(os.path.expanduser("~"), "Desktop")
+
+        if txt_files:
+            process_txt_files(txt_files, save_dir)
+            return
 
         df_list = []
         hinshoku_num = None
@@ -1082,7 +1180,11 @@ def process_files(files):
 # ■ メイン
 # =========================
 def run():
-    files = filedialog.askopenfilenames(filetypes=[("CSV files", "*.csv")])
+    files = filedialog.askopenfilenames(filetypes=[
+        ("CSV/txtファイル", "*.csv *.txt"),
+        ("CSV files", "*.csv"),
+        ("txtファイル", "*.txt"),
+    ])
     if files:
         process_files(list(files))
 
@@ -1105,10 +1207,10 @@ if __name__ == "__main__":
 
     tk.Label(frame, text="WC分析ツール", font=("", 18, "bold"),
              bg=APP_BG, fg=APP_TEXT).pack()
-    tk.Label(frame, text="測定データ（CSV）を選んで分析を始めましょう", font=("", 10),
+    tk.Label(frame, text="測定データ（CSV／txt）を選んで分析を始めましょう", font=("", 10),
              bg=APP_BG, fg=APP_SUBTEXT).pack(pady=(4, 24))
 
-    btn = tk.Button(frame, text="CSV選択して解析", command=run, height=2, width=26,
+    btn = tk.Button(frame, text="CSV/txt選択して解析", command=run, height=2, width=26,
                      font=("", 11, "bold"), bg=APP_ACCENT, fg="white",
                      activebackground=APP_ACCENT_ACTIVE, activeforeground="white",
                      relief="flat", bd=0, cursor="hand2")
