@@ -278,6 +278,32 @@ def normalize_columns(file):
         df["日付時刻"] = pd.to_datetime(df["日付時刻"], errors="coerce")
         return df, hinshoku_num
 
+    # ===== 旧イシダ（WeightLog形式） =====
+    # ヘッダーが文字化けして読めない機種。列位置で判定する：
+    # 1列目=日付, 2列目=時刻, 5列目=品種番号(予約番号), 7列目=測定値(g),
+    # 8列目=振分ステータス(1=OK, 2=軽量, 3=過量, 16=外部1=NG)
+    if df.shape[1] >= 8:
+        status_col = pd.to_numeric(df.iloc[:, 7], errors="coerce").dropna()
+        weight_col = pd.to_numeric(df.iloc[:, 6], errors="coerce").dropna()
+        if len(status_col) > 0 and len(weight_col) > 0 and status_col.isin([1, 2, 3, 16]).mean() > 0.95:
+            hinshoku_num = None
+            hinshoku_vals = pd.to_numeric(df.iloc[:, 4], errors="coerce").dropna()
+            if len(hinshoku_vals) > 0:
+                hinshoku_num = int(hinshoku_vals.iloc[0])
+
+            status_map = {1: "2", 2: "1", 3: "E", 16: "N"}
+            df_new = pd.DataFrame({
+                "測定値出力No.": range(1, len(df) + 1),
+                "日付時刻": pd.to_datetime(
+                    df.iloc[:, 0].astype(str) + " " + df.iloc[:, 1].astype(str),
+                    errors="coerce"
+                ),
+                "測定値(g)": pd.to_numeric(df.iloc[:, 6], errors="coerce"),
+                "ランクコード": pd.to_numeric(df.iloc[:, 7], errors="coerce").map(status_map),
+                "メーカー": "旧イシダ",
+            })
+            return df_new, hinshoku_num
+
     # ===== イシダ判定 =====
     df_ishida = _read_csv(file, skiprows=10)
     df_ishida.columns = df_ishida.columns.str.replace("　", "").str.replace(" ", "").str.strip()
@@ -288,7 +314,7 @@ def normalize_columns(file):
     )
     if not is_ishida:
         raise ValueError(
-            f"未対応のCSVフォーマットです。アンリツまたはイシダ形式のCSVを選択してください。\n"
+            f"未対応のCSVフォーマットです。アンリツ・イシダ・旧イシダ形式のCSVを選択してください。\n"
             f"ファイル: {os.path.basename(file)}"
         )
 
