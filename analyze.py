@@ -1,4 +1,10 @@
 import platform
+import queue
+import threading
+
+import matplotlib
+matplotlib.use("Agg")  # 画面表示せずファイル保存のみ行うため、バックグラウンドスレッドでも安全な非対話バックエンドを使う
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -224,6 +230,80 @@ class LotPreviewDialog(tk.Toplevel):
 
 
 # =========================
+# ■ 進捗ダイアログ／バックグラウンド実行
+# =========================
+class ProgressDialog(tk.Toplevel):
+    """グラフ描画・Excel保存など重い処理の間、GUIをフリーズさせずに進捗を表示する。"""
+
+    def __init__(self, parent, title, total):
+        super().__init__(parent)
+        self.title(title)
+        self.resizable(False, False)
+        self.configure(bg=APP_BG)
+        self.protocol("WM_DELETE_WINDOW", lambda: None)  # 処理完了まで閉じさせない
+        self.grab_set()
+
+        frame = ttk.Frame(self, padding=24)
+        frame.pack()
+
+        self.label_var = tk.StringVar(value="準備中...")
+        ttk.Label(frame, textvariable=self.label_var, width=42).pack(pady=(0, 10))
+
+        self.progress = ttk.Progressbar(
+            frame, orient="horizontal", length=320,
+            mode="determinate", maximum=max(total, 1)
+        )
+        self.progress.pack()
+
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry(f"+{x}+{y}")
+
+    def update_progress(self, current, message=""):
+        self.progress["value"] = current
+        if message:
+            self.label_var.set(message)
+
+
+def _run_in_background(parent, title, total, worker_fn, on_done):
+    """worker_fn(progress_callback) を別スレッドで実行するヘルパー。
+
+    Tkinterはメインスレッド以外からのGUI操作が安全ではないため、進捗ダイアログの
+    表示・更新はメインスレッドのイベントループ（after）経由でのみ行う。完了後、
+    on_done(result, error) をメインスレッドから呼び出す。
+    """
+    result_queue = queue.Queue()
+    dialog = ProgressDialog(parent, title, total)
+
+    def worker():
+        try:
+            result = worker_fn(
+                lambda current, message="": result_queue.put(("progress", current, message))
+            )
+            result_queue.put(("done", result, None))
+        except Exception as e:
+            result_queue.put(("done", None, e))
+
+    def poll():
+        try:
+            while True:
+                kind, a, b = result_queue.get_nowait()
+                if kind == "progress":
+                    dialog.update_progress(a, b)
+                else:
+                    dialog.destroy()
+                    on_done(a, b)
+                    return
+        except queue.Empty:
+            pass
+        parent.after(100, poll)
+
+    threading.Thread(target=worker, daemon=True).start()
+    parent.after(100, poll)
+
+
+# =========================
 # ■ CSV正規化
 # =========================
 _ISHIDA_RANK_VALUES = {"正量", "軽量", "過量"}
@@ -402,9 +482,6 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
                           total_count, original_ok_count, hinshoku_num, date_str, lot,
                           img_all_series_bytes=None,
                           mfg_start="−", mfg_end="−", mfg_duration="−",
-                          spec_nominal=None, usl=None, lsl=None,
-                          upper_offset=None, lower_offset=None,
-                          over_usl_count=None, under_lsl_count=None,
                           lot_display=None, product_display=None):
 
     ws = wb.create_sheet("分析レポート", 0)
@@ -479,14 +556,6 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
         ("製造時間",         mfg_duration,      "@",     False),
         ("__subheader__",  "統計値（OK品のみ）", None,   False),
         ("平均 (g)",        mean,              "0.000", False),
-    ]
-    if spec_nominal is not None:
-        deviation = mean - spec_nominal
-        stats_rows += [
-            ("基準値 (g)",        spec_nominal,      "0.000", False),
-            ("基準値とのズレ (g)", deviation,         "+0.000", False),
-        ]
-    stats_rows += [
         ("標準偏差 (g)",     std,               "0.000", False),
         ("Max (g)",        max1,              "0.000", False),
         ("Min (g)",        min1,              "0.000", False),
@@ -495,18 +564,6 @@ def _create_report_sheet(wb, df_ok, mean, std, ci, max1, min1, lower, upper,
         (None, None, None, False),
         ("外れ値件数",       len(outliers_df),  "0",     len(outliers_df) > 0),
     ]
-    if usl is not None:
-        ucl_label = f"UCL (基準値+{upper_offset:.3f}) (g)" if upper_offset is not None else "UCL (g)"
-        lcl_label = f"LCL (基準値-{lower_offset:.3f}) (g)" if lower_offset is not None else "LCL (g)"
-        stats_rows += [
-            ("__subheader__", "規格値",     None,    False),
-            (ucl_label,       usl,          "0.000", False),
-            (lcl_label,       lsl,          "0.000", False),
-        ]
-        if over_usl_count is not None:
-            stats_rows.append(("UCL超え件数（全数）", over_usl_count, "0", over_usl_count > 0))
-        if under_lsl_count is not None:
-            stats_rows.append(("LCL未満件数（全数）", under_lsl_count, "0", under_lsl_count > 0))
 
     subheader_fill = PatternFill(start_color="FF8EA9C1", fill_type="solid")
     subheader_font = Font(bold=True, size=9, color="FFFFFFFF")
@@ -664,9 +721,6 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
                   total_count=0, original_ok_count=0, hinshoku_num=None, date_str=None,
                   df_all=None, img_all_series=None,
                   mfg_start="−", mfg_end="−", mfg_duration="−",
-                  spec_nominal=None, usl=None, lsl=None,
-                  upper_offset=None, lower_offset=None,
-                  over_usl_count=None, under_lsl_count=None,
                   lot_display=None, product_display=None):
 
     red_fill    = PatternFill(start_color="FFFF0000", fill_type="solid")
@@ -747,9 +801,6 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
             total_count, original_ok_count, hinshoku_num, date_str, lot,
             img_all_series_bytes=img_all_series.getvalue() if img_all_series is not None else None,
             mfg_start=mfg_start, mfg_end=mfg_end, mfg_duration=mfg_duration,
-            spec_nominal=spec_nominal, usl=usl, lsl=lsl,
-            upper_offset=upper_offset, lower_offset=lower_offset,
-            over_usl_count=over_usl_count, under_lsl_count=under_lsl_count,
             lot_display=lot_display, product_display=product_display
         )
 
@@ -771,11 +822,10 @@ def save_to_excel(df_ok, mean, std, ci, max1, min1, lower, upper,
 # =========================
 # ■ ロット処理
 # =========================
-def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=None,
+def process_lot(group, lot, save_dir, hinshoku_num=None, lot_label=None,
                 product_name=None):
     """
     1ロット分の分析を行いExcelを出力する。
-    spec: None | (nominal_or_None, offset_or_None)
     戻り値:
         ("ok",   ok_count) … 正常に作成
         ("skip", ok_count) … OKデータ不足によりスキップ
@@ -802,23 +852,6 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     mean, std, ci, max1, min1, lower, upper = analyze(data)
 
     outliers_df = df_ok[(df_ok["測定値(g)"] < lower) | (df_ok["測定値(g)"] > upper)]
-
-    # ===== 規格値・工程能力 =====
-    spec_nominal = usl = lsl = upper_offset = lower_offset = None
-    if spec is not None:
-        input_nominal, upper_offset, lower_offset = spec
-        # 基準値：入力値 or OK品全体の平均
-        spec_nominal = input_nominal if input_nominal is not None else mean
-        # UCL = 基準値 + 上側許容幅、LCL = 基準値 − 下側許容幅（非対称対応）
-        usl = spec_nominal + upper_offset if upper_offset is not None else None
-        lsl = spec_nominal - lower_offset if lower_offset is not None else None
-
-    # 全データのうちUCL/LCLを超えた件数
-    over_usl_count = under_lsl_count = None
-    if usl is not None or lsl is not None:
-        all_values = pd.to_numeric(group["測定値(g)"], errors="coerce")
-        over_usl_count  = int((all_values > usl).sum()) if usl is not None else None
-        under_lsl_count = int((all_values < lsl).sum()) if lsl is not None else None
 
     lot_display = lot_label if lot_label else f"ロット{lot}"
     lot_display_safe = lot_display.translate(str.maketrans('\\/:*?"<>|', '_________'))
@@ -848,14 +881,8 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
     fig1, ax1 = plt.subplots(figsize=(10, 6))
     ax1.hist(data, bins=30, edgecolor="black", alpha=0.7)
     ax1.axvline(mean, color="red", linestyle="-", linewidth=2, label=f"平均: {mean:.3f}")
-    if spec_nominal is not None:
-        ax1.axvline(spec_nominal, color="navy", linewidth=2.0, linestyle=":",
-                    label=f"基準値: {spec_nominal:.3f}")
     ax1.axvline(lower, color="orange", linestyle="--", linewidth=2, label=f"下限(-3σ): {lower:.3f}")
     ax1.axvline(upper, color="orange", linestyle="--", linewidth=2, label=f"上限(+3σ): {upper:.3f}")
-    if usl is not None:
-        ax1.axvline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
-        ax1.axvline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
     ax1.set_title(f"{chart_prefix}{lot_display}　測定値の分布（OK品のみ・n={len(data)}）", fontsize=14, fontweight="bold")
     ax1.set_xlabel("測定値(g)", fontsize=12)
     ax1.set_ylabel("頻度", fontsize=12)
@@ -910,17 +937,11 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                         arrowprops=dict(arrowstyle="-", color="red", linewidth=0.8))
 
     ax2.axhline(mean,  color="red",    linewidth=1.5, linestyle="-",  label=f"平均: {mean:.3f}")
-    if spec_nominal is not None:
-        ax2.axhline(spec_nominal, color="navy", linewidth=1.5, linestyle=":",
-                    label=f"基準値: {spec_nominal:.3f}")
     ax2.axhline(upper, color="orange", linewidth=1.5, linestyle="--", label=f"+3σ: {upper:.3f}")
     ax2.axhline(lower, color="orange", linewidth=1.5, linestyle="--", label=f"-3σ: {lower:.3f}")
-    if usl is not None:
-        ax2.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
-        ax2.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
     margin2 = std * 0.5
-    y_lo2 = min(y_vals.min(), lower, lsl) if lsl is not None else min(y_vals.min(), lower)
-    y_hi2 = max(y_vals.max(), upper, usl) if usl is not None else max(y_vals.max(), upper)
+    y_lo2 = min(y_vals.min(), lower)
+    y_hi2 = max(y_vals.max(), upper)
     ax2.set_ylim(y_lo2 - margin2, y_hi2 + margin2)
 
     ax2.set_title(f"{chart_prefix}{lot_display}　時系列チャート（OK品のみ・n={len(df_ok)}）", fontsize=14, fontweight="bold")
@@ -980,16 +1001,10 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                     label=f"NG ({ng_mask.sum()}件)")
 
     ax3.axhline(mean,  color="red",    linewidth=1.5, linestyle="-",  label=f"平均（OK品）: {mean:.3f}")
-    if spec_nominal is not None:
-        ax3.axhline(spec_nominal, color="navy", linewidth=1.5, linestyle=":",
-                    label=f"基準値: {spec_nominal:.3f}")
     ax3.axhline(upper, color="darkorange", linewidth=1.5, linestyle="--", label=f"+3σ（OK品）: {upper:.3f}")
     ax3.axhline(lower, color="darkorange", linewidth=1.5, linestyle="--", label=f"-3σ（OK品）: {lower:.3f}")
-    if usl is not None:
-        ax3.axhline(usl, color="purple", linewidth=2.0, linestyle="-.", label=f"UCL: {usl:.3f} (基準値+{upper_offset:.3f})")
-        ax3.axhline(lsl, color="purple", linewidth=2.0, linestyle="-.", label=f"LCL: {lsl:.3f} (基準値-{lower_offset:.3f})")
-    y_lo = min(mean - 10 * std, lsl - std * 3) if lsl is not None else mean - 10 * std
-    y_hi = max(mean + 10 * std, usl + std * 3) if usl is not None else mean + 10 * std
+    y_lo = mean - 10 * std
+    y_hi = mean + 10 * std
     data_min = y_vals_all.min()
     data_max = y_vals_all.max()
     pad = max((data_max - data_min) * 0.12, std * 2)
@@ -1026,9 +1041,6 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, spec=None, lot_label=No
                   hinshoku_num=hinshoku_num, date_str=date_str,
                   df_all=group, img_all_series=img_all_series,
                   mfg_start=mfg_start, mfg_end=mfg_end, mfg_duration=mfg_duration,
-                  spec_nominal=spec_nominal, usl=usl, lsl=lsl,
-                  upper_offset=upper_offset, lower_offset=lower_offset,
-                  over_usl_count=over_usl_count, under_lsl_count=under_lsl_count,
                   lot_display=lot_display, product_display=product_display)
 
     return ("ok", len(data))
@@ -1051,18 +1063,13 @@ def _expand_folders(paths):
     return expanded
 
 
-def process_txt_files(files, save_dir):
-    """WC計量機のtxtファイルを読み込み、1ファイル＝1ロットとしてExcelを作成する。
-
-    txtには測定値出力No.・測定値(g)・判定(OK/NG)しか無く、品種番号や
-    測定1件ごとの時刻・軽量/過量の区別が無いため、CSV由来のロット分割
-    ダイアログは使わず、ファイルごとに直接 process_lot を呼び出す。
-    """
+def _process_txt_files_worker(files, save_dir, progress_callback):
     created_lots = []   # [(label, ok_count), ...]
     skipped_lots = []   # [(label, ok_count, total_count), ...]
     failed_files = []   # [(name, error), ...]
 
-    for f in files:
+    for i, f in enumerate(files, start=1):
+        progress_callback(i - 1, f"処理中... ({i}/{len(files)}) {os.path.basename(f)}")
         try:
             df, dt = normalize_txt(f)
         except Exception as e:
@@ -1071,32 +1078,76 @@ def process_txt_files(files, save_dir):
 
         lot_label = f"{dt.strftime('%Y-%m-%d %H:%M')} 測定" if dt is not None else Path(f).stem
         total = len(df)
-        status, ok_count = process_lot(df, 1, save_dir, hinshoku_num=None, spec=None,
+        status, ok_count = process_lot(df, 1, save_dir, hinshoku_num=None,
                                        lot_label=lot_label, product_name=None)
         if status == "ok":
             created_lots.append((lot_label, ok_count))
         else:
             skipped_lots.append((lot_label, ok_count, total))
 
-    msg_parts = []
-    if created_lots:
-        msg_parts.append(f"Excel作成完了\n作成: {len(created_lots)}ファイル（デスクトップに保存しました）")
-    if skipped_lots:
-        s = "⚠ 以下はOKデータ不足のためスキップしました:\n"
-        s += "\n".join(f"  ・{label}: 総{total}件 / OK{ok}件" for label, ok, total in skipped_lots)
-        s += f"\n（OKデータが {MIN_OK_COUNT} 件未満は統計計算ができません）"
-        msg_parts.append(s)
-    if failed_files:
-        s = "⚠ 以下は読み込みに失敗しました:\n"
-        s += "\n".join(f"  ・{name}: {err}" for name, err in failed_files)
-        msg_parts.append(s)
+    progress_callback(len(files), "完了")
+    return created_lots, skipped_lots, failed_files
 
-    if not created_lots:
-        messagebox.showerror("作成失敗", "\n\n".join(msg_parts) if msg_parts else "処理できるファイルがありませんでした。")
-    elif skipped_lots or failed_files:
-        messagebox.showwarning("完了（一部スキップ/失敗）", "\n\n".join(msg_parts))
-    else:
-        messagebox.showinfo("完了", "\n\n".join(msg_parts))
+
+def process_txt_files(files, save_dir):
+    """WC計量機のtxtファイルを読み込み、1ファイル＝1ロットとしてExcelを作成する。
+
+    txtには測定値出力No.・測定値(g)・判定(OK/NG)しか無く、品種番号や
+    測定1件ごとの時刻・軽量/過量の区別が無いため、CSV由来のロット分割
+    ダイアログは使わず、ファイルごとに直接 process_lot を呼び出す。
+    グラフ描画・Excel保存はバックグラウンドスレッドで実行し、GUIのフリーズを防ぐ。
+    """
+
+    def on_done(result, error):
+        if error is not None:
+            messagebox.showerror("エラー", str(error))
+            return
+
+        created_lots, skipped_lots, failed_files = result
+
+        msg_parts = []
+        if created_lots:
+            msg_parts.append(f"Excel作成完了\n作成: {len(created_lots)}ファイル（デスクトップに保存しました）")
+        if skipped_lots:
+            s = "⚠ 以下はOKデータ不足のためスキップしました:\n"
+            s += "\n".join(f"  ・{label}: 総{total}件 / OK{ok}件" for label, ok, total in skipped_lots)
+            s += f"\n（OKデータが {MIN_OK_COUNT} 件未満は統計計算ができません）"
+            msg_parts.append(s)
+        if failed_files:
+            s = "⚠ 以下は読み込みに失敗しました:\n"
+            s += "\n".join(f"  ・{name}: {err}" for name, err in failed_files)
+            msg_parts.append(s)
+
+        if not created_lots:
+            messagebox.showerror("作成失敗", "\n\n".join(msg_parts) if msg_parts else "処理できるファイルがありませんでした。")
+        elif skipped_lots or failed_files:
+            messagebox.showwarning("完了（一部スキップ/失敗）", "\n\n".join(msg_parts))
+        else:
+            messagebox.showinfo("完了", "\n\n".join(msg_parts))
+
+    _run_in_background(
+        app_root, "Excel作成中...", len(files),
+        lambda progress_callback: _process_txt_files_worker(files, save_dir, progress_callback),
+        on_done
+    )
+
+
+def _process_lots_worker(df, save_dir, hinshoku_num, progress_callback):
+    created_lots = []   # [(lot, ok_count), ...]
+    skipped_lots = []   # [(lot, ok_count, total_count), ...]
+
+    lots = list(df.groupby("ロット"))
+    for i, (lot, group) in enumerate(lots, start=1):
+        progress_callback(i - 1, f"ロット{lot} を処理中... ({i}/{len(lots)})")
+        total = len(group)
+        status, ok_count = process_lot(group, lot, save_dir, hinshoku_num)
+        if status == "ok":
+            created_lots.append((lot, ok_count))
+        else:
+            skipped_lots.append((lot, ok_count, total))
+
+    progress_callback(len(lots), "完了")
+    return created_lots, skipped_lots
 
 
 def process_files(files):
@@ -1157,46 +1208,41 @@ def process_files(files):
 
         df = dialog.result[1]
 
-        # ロットごとの規格値（未入力のまま自動算出に任せる）
-        spec_per_lot = {lot: (None, None, None) for lot in df["ロット"].unique()}
+        def on_done(result, error):
+            if error is not None:
+                messagebox.showerror("エラー", str(error))
+                return
 
-        # 結果集計
-        created_lots = []   # [(lot, ok_count), ...]
-        skipped_lots = []   # [(lot, ok_count, total_count), ...]
+            created_lots, skipped_lots = result
 
-        for lot, group in df.groupby("ロット"):
-            total = len(group)
-            lot_spec, lot_label, product_name = spec_per_lot.get(lot, (None, None, None))
-            status, ok_count = process_lot(group, lot, save_dir, hinshoku_num,
-                                           spec=lot_spec, lot_label=lot_label,
-                                           product_name=product_name)
-            if status == "ok":
-                created_lots.append((lot, ok_count))
+            # ===== 完了メッセージ =====
+            if not created_lots and skipped_lots:
+                msg = "Excelファイルは作成されませんでした。\n\n"
+                msg += "すべてのロットでOKデータが不足しています:\n"
+                for lot, ok, total in skipped_lots:
+                    msg += f"  ・ロット{lot}: 総{total}件 / OK{ok}件\n"
+                msg += "\nしきい値を変更するか、CSVの内容をご確認ください。"
+                messagebox.showerror("作成失敗", msg)
+
+            elif skipped_lots:
+                msg = f"Excel作成完了\n作成: {len(created_lots)}ファイル（デスクトップに保存しました）\n\n"
+                msg += "⚠ 以下のロットはOKデータ不足のためスキップしました:\n"
+                for lot, ok, total in skipped_lots:
+                    msg += f"  ・ロット{lot}: 総{total}件 / OK{ok}件\n"
+                msg += f"\n（OKデータが {MIN_OK_COUNT} 件未満のロットは統計計算ができません）"
+                messagebox.showwarning("完了（一部スキップ）", msg)
+
             else:
-                skipped_lots.append((lot, ok_count, total))
+                messagebox.showinfo(
+                    "完了",
+                    f"Excel作成完了\n{len(created_lots)}ファイルをデスクトップに保存しました。"
+                )
 
-        # ===== 完了メッセージ =====
-        if not created_lots and skipped_lots:
-            msg = "Excelファイルは作成されませんでした。\n\n"
-            msg += "すべてのロットでOKデータが不足しています:\n"
-            for lot, ok, total in skipped_lots:
-                msg += f"  ・ロット{lot}: 総{total}件 / OK{ok}件\n"
-            msg += "\nしきい値を変更するか、CSVの内容をご確認ください。"
-            messagebox.showerror("作成失敗", msg)
-
-        elif skipped_lots:
-            msg = f"Excel作成完了\n作成: {len(created_lots)}ファイル（デスクトップに保存しました）\n\n"
-            msg += "⚠ 以下のロットはOKデータ不足のためスキップしました:\n"
-            for lot, ok, total in skipped_lots:
-                msg += f"  ・ロット{lot}: 総{total}件 / OK{ok}件\n"
-            msg += f"\n（OKデータが {MIN_OK_COUNT} 件未満のロットは統計計算ができません）"
-            messagebox.showwarning("完了（一部スキップ）", msg)
-
-        else:
-            messagebox.showinfo(
-                "完了",
-                f"Excel作成完了\n{len(created_lots)}ファイルをデスクトップに保存しました。"
-            )
+        _run_in_background(
+            app_root, "Excel作成中...", df["ロット"].nunique(),
+            lambda progress_callback: _process_lots_worker(df, save_dir, hinshoku_num, progress_callback),
+            on_done
+        )
 
     except Exception as e:
         messagebox.showerror("エラー", str(e))
