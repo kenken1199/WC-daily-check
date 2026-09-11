@@ -1,5 +1,6 @@
 import platform
 import queue
+import re
 import threading
 
 import matplotlib
@@ -307,14 +308,46 @@ def _run_in_background(parent, title, total, worker_fn, on_done):
 # ■ CSV正規化
 # =========================
 _ISHIDA_RANK_VALUES = {"正量", "軽量", "過量"}
+_DATA_ROW_PATTERN = re.compile(r"^\d{4}/\d{1,2}/\d{1,2}[,\t]")
+
+
+def _detect_header_skiprows(file, encoding):
+    """先頭に可変長のメタデータ行（機種名・シリアル番号・予約番号など）を持つ
+    CSV（旧イシダ WeightLog形式の一部機種など）向けに、データ行の直前
+    （ヘッダー行）までスキップする行数を検出する。
+    「YYYY/M/D」で始まる行を最初のデータ行とみなす。見つからない場合はNone。
+    """
+    try:
+        with open(file, encoding=encoding, errors="replace") as f:
+            for i, line in enumerate(f):
+                if _DATA_ROW_PATTERN.match(line):
+                    return max(i - 1, 0)
+    except OSError:
+        pass
+    return None
 
 
 def _read_csv(file, **kwargs):
+    last_parser_error = None
     for enc in ("cp932", "utf-8-sig"):
         try:
             return pd.read_csv(file, encoding=enc, **kwargs)
         except UnicodeDecodeError:
             continue
+        except pd.errors.ParserError as e:
+            last_parser_error = e
+            # 先頭に可変長のメタデータ行（機種名・シリアル番号・予約番号など）が
+            # あるため行ごとの列数が食い違い、パースエラーになる機種向けのフォールバック。
+            # データ行の直前（ヘッダー行）までスキップして読み直す。
+            if "skiprows" not in kwargs:
+                skip = _detect_header_skiprows(file, enc)
+                if skip is not None:
+                    try:
+                        return pd.read_csv(file, encoding=enc, skiprows=skip, **kwargs)
+                    except (UnicodeDecodeError, pd.errors.ParserError):
+                        pass
+    if last_parser_error is not None:
+        raise last_parser_error
     raise ValueError(f"CSVのエンコーディングを判別できませんでした: {os.path.basename(file)}")
 
 
@@ -392,6 +425,20 @@ def normalize_columns(file):
         len(df_ishida.columns) >= 6
         and df_ishida.iloc[:, 5].dropna().astype(str).isin(_ISHIDA_RANK_VALUES).any()
     )
+
+    # 固定skiprows=10が実際のヘッダー行位置とズレている機種（旧イシダ WeightLog形式
+    # など）では、df_ishidaの方が読み落とした分だけ行数が少なくなる。冒頭で既に
+    # 正しいヘッダー行位置を検出して読み込み済みのdfの方が多くのデータを保持して
+    # いれば、そちらを優先して使う。
+    df_wide = df.loc[:, ~df.columns.duplicated()]
+    if (
+        len(df_wide.columns) >= 6
+        and len(df_wide) > len(df_ishida)
+        and df_wide.iloc[:, 5].dropna().astype(str).isin(_ISHIDA_RANK_VALUES).any()
+    ):
+        df_ishida = df_wide
+        is_ishida = True
+
     if not is_ishida:
         raise ValueError(
             f"未対応のCSVフォーマットです。アンリツ・イシダ・旧イシダ形式のCSVを選択してください。\n"
