@@ -307,7 +307,11 @@ def _run_in_background(parent, title, total, worker_fn, on_done):
 # =========================
 # ■ CSV正規化
 # =========================
-_ISHIDA_RANK_VALUES = {"正量", "軽量", "過量"}
+_ISHIDA_RANK_VALUES = {
+    "正量", "軽量", "過量",
+    "ピッチ異常", "外部１", "外部２", "外部３", "外部４", "物長異常",
+}
+_ISHIDA_NG_VALUES = {"ピッチ異常", "外部１", "外部２", "外部３", "外部４", "物長異常"}
 _DATA_ROW_PATTERN = re.compile(r"^\d{4}/\d{1,2}/\d{1,2}[,\t]")
 
 
@@ -462,8 +466,12 @@ def normalize_columns(file):
         df_ishida["日付"].astype(str) + " " + df_ishida["時刻"].astype(str),
         errors="coerce"
     )
+    # "--OL--"（オーバーロード時のエラー値）など数値以外が混在すると測定値(g)列が
+    # 文字列型のままになり、後続の閾値比較でエラーになるため、必ず数値化しておく。
+    df_ishida["測定値(g)"] = pd.to_numeric(df_ishida["測定値(g)"], errors="coerce")
     df_ishida["測定値出力No."] = range(1, len(df_ishida) + 1)
     rank_map = {"正量": "2", "軽量": "1", "過量": "E"}
+    rank_map.update({ng: "N" for ng in _ISHIDA_NG_VALUES})
     df_ishida["ランクコード"] = df_ishida["判定"].map(rank_map)
     df_ishida["メーカー"] = "イシダ"
 
