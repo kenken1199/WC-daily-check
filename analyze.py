@@ -991,6 +991,11 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, lot_label=None,
                                              edgecolor="red", alpha=0.9),
                         arrowprops=dict(arrowstyle="-", color="red", linewidth=0.8))
 
+    moving_avg2 = pd.Series(y_vals).rolling(window=50, min_periods=50).mean()
+    if moving_avg2.notna().any():
+        ax2.plot(x_all, moving_avg2, color="purple", linewidth=2.0, alpha=0.9, zorder=5,
+                  label="50点移動平均（OK品）")
+
     ax2.axhline(mean,  color="red",    linewidth=1.5, linestyle="-",  label=f"平均: {mean:.3f}")
     ax2.axhline(upper, color="orange", linewidth=1.5, linestyle="--", label=f"+3σ: {upper:.3f}")
     ax2.axhline(lower, color="orange", linewidth=1.5, linestyle="--", label=f"-3σ: {lower:.3f}")
@@ -1023,9 +1028,26 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, lot_label=None,
     y_keiry_all = y_vals_all[keiry_mask].values
     y_ng_all    = y_vals_all[ng_mask].values
 
+    # 表示範囲は OK品の 平均±6σ に固定する。これを超える値は上下端に退避してプロットし、
+    # 実測値をテキストで併記する（軽量/過量の区別はマーカーの色・形で維持したまま）。
+    display_lower = mean - 6 * std
+    display_upper = mean + 6 * std
+
+    def _clip_for_display(y_arr):
+        y_arr = np.asarray(y_arr, dtype=float)
+        y_disp = np.clip(y_arr, display_lower, display_upper)
+        is_clipped = ~np.isnan(y_arr) & (y_arr != y_disp)
+        return y_disp, is_clipped
+
+    y_ok_disp,    ok_clipped    = _clip_for_display(y_ok_all)
+    y_kacho_disp, kacho_clipped = _clip_for_display(y_kacho_all)
+    y_keiry_disp, keiry_clipped = _clip_for_display(y_keiry_all)
+    y_ng_disp,    ng_clipped    = _clip_for_display(y_ng_all)
+
     fig3, ax3 = plt.subplots(figsize=(12, 5))
 
     if group_sorted["日付時刻"].notna().any():
+        x_all       = group_sorted["日付時刻"]
         x_ok_all    = group_sorted.loc[ok_mask,    "日付時刻"]
         x_kacho_all = group_sorted.loc[kacho_mask, "日付時刻"]
         x_keiry_all = group_sorted.loc[keiry_mask, "日付時刻"]
@@ -1036,36 +1058,64 @@ def process_lot(group, lot, save_dir, hinshoku_num=None, lot_label=None,
         ax3.set_xlabel("時刻", fontsize=12)
     else:
         x_base       = np.arange(1, len(group_sorted) + 1)
+        x_all        = pd.Series(x_base)
         x_ok_all     = x_base[ok_mask.values]
         x_kacho_all  = x_base[kacho_mask.values]
         x_keiry_all  = x_base[keiry_mask.values]
         x_ng_all     = x_base[ng_mask.values]
         ax3.set_xlabel("測定順序", fontsize=12)
 
-    ax3.plot(x_ok_all, y_ok_all, color="steelblue", linewidth=0.6, alpha=0.4, zorder=1)
-    ax3.scatter(x_ok_all, y_ok_all, color="steelblue", s=18, alpha=0.8, zorder=2,
+    # ±6σ以内のデータ（全ランク）を対象に50点移動平均線を重ねる
+    in_range_mask = (y_vals_all >= display_lower) & (y_vals_all <= display_upper)
+    y_in_range = y_vals_all[in_range_mask]
+    x_in_range = x_all[in_range_mask]
+    moving_avg = y_in_range.rolling(window=50, min_periods=50).mean()
+
+    ax3.plot(x_ok_all, y_ok_disp, color="steelblue", linewidth=0.6, alpha=0.4, zorder=1)
+    ax3.scatter(x_ok_all, y_ok_disp, color="steelblue", s=18, alpha=0.8, zorder=2,
                 label=f"OK ({ok_mask.sum()}件)")
     if kacho_mask.any():
-        ax3.scatter(x_kacho_all, y_kacho_all, color="red", s=60, marker="^", zorder=4,
+        ax3.scatter(x_kacho_all, y_kacho_disp, color="red", s=60, marker="^", zorder=4,
                     label=f"過量 ({kacho_mask.sum()}件)")
     if keiry_mask.any():
-        ax3.scatter(x_keiry_all, y_keiry_all, color="orange", s=60, marker="v", zorder=4,
+        ax3.scatter(x_keiry_all, y_keiry_disp, color="orange", s=60, marker="v", zorder=4,
                     label=f"軽量 ({keiry_mask.sum()}件)")
     if ng_mask.any():
-        ax3.scatter(x_ng_all, y_ng_all, color="red", s=50, marker="x", linewidths=2, zorder=4,
+        ax3.scatter(x_ng_all, y_ng_disp, color="red", s=50, marker="x", linewidths=2, zorder=4,
                     label=f"NG ({ng_mask.sum()}件)")
+
+    if moving_avg.notna().any():
+        ax3.plot(x_in_range, moving_avg, color="purple", linewidth=2.0, alpha=0.9, zorder=5,
+                  label="50点移動平均（±6σ以内）")
+
+    def _annotate_clipped(x_arr, y_disp, is_clipped, y_actual):
+        """±6σを超えて上下端に退避させた点に、実測値をテキストで表示する。
+        ラベルは点からプロット内側（軸の内側）に向けて配置し、下端の時刻軸目盛と重ならないようにする。"""
+        x_arr = np.asarray(x_arr)
+        for xi, y_d, clipped, y_a in zip(x_arr, y_disp, is_clipped, y_actual):
+            if not clipped:
+                continue
+            at_top = y_d >= display_upper
+            ax3.annotate(
+                f"{y_a:.3f}",
+                (xi, y_d),
+                textcoords="offset points", xytext=(0, -13 if at_top else 13),
+                ha="center", va="top" if at_top else "bottom",
+                fontsize=8, color="black", fontweight="bold", zorder=7,
+                annotation_clip=False,
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
+                          edgecolor="gray", alpha=0.9),
+            )
+
+    _annotate_clipped(x_ok_all,    y_ok_disp,    ok_clipped,    y_ok_all)
+    _annotate_clipped(x_kacho_all, y_kacho_disp, kacho_clipped, y_kacho_all)
+    _annotate_clipped(x_keiry_all, y_keiry_disp, keiry_clipped, y_keiry_all)
+    _annotate_clipped(x_ng_all,    y_ng_disp,    ng_clipped,    y_ng_all)
 
     ax3.axhline(mean,  color="red",    linewidth=1.5, linestyle="-",  label=f"平均（OK品）: {mean:.3f}")
     ax3.axhline(upper, color="darkorange", linewidth=1.5, linestyle="--", label=f"+3σ（OK品）: {upper:.3f}")
     ax3.axhline(lower, color="darkorange", linewidth=1.5, linestyle="--", label=f"-3σ（OK品）: {lower:.3f}")
-    y_lo = mean - 10 * std
-    y_hi = mean + 10 * std
-    data_min = y_vals_all.min()
-    data_max = y_vals_all.max()
-    pad = max((data_max - data_min) * 0.12, std * 2)
-    y_lo = min(y_lo, data_min - pad)
-    y_hi = max(y_hi, data_max + pad)
-    ax3.set_ylim(y_lo, y_hi)
+    ax3.set_ylim(display_lower, display_upper)
 
     ax3.set_title(f"{chart_prefix}{lot_display}　全データ時系列（n={len(group_sorted)}）", fontsize=14, fontweight="bold")
     ax3.set_ylabel("測定値(g)", fontsize=12)
